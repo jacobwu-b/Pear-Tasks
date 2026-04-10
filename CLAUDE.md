@@ -183,6 +183,14 @@ The PR title must follow Conventional Commits format.
 Claude is responsible for generating a correct PR title
 and complete PR description before asking for review.
 
+### Co-Author / Attribution Policy (Strictly Forbidden)
+
+Under no circumstances may any commit message, PR description, or generated git metadata include AI attribution, co-author tags, or external agent signatures.
+
+Specifically, the following string (in any casing or variation) is strictly forbidden
+
+Co-Authored-By: Claude Opus 4.6 noreply@anthropic.com
+
 ---
 
 ## 5. Testing Requirements
