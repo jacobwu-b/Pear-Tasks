@@ -7,7 +7,7 @@ interface ChecklistEditorProps {
 }
 
 export default function ChecklistEditor({ taskId }: ChecklistEditorProps) {
-  const { loadChecklist, addChecklistItem, toggleChecklistItem, deleteChecklistItem } = useTaskStore();
+  const { loadChecklist, addChecklistItem, toggleChecklistItem, updateChecklistItemTitle, deleteChecklistItem } = useTaskStore();
   const [items, setItems] = useState<ChecklistItem[]>([]);
   const [newTitle, setNewTitle] = useState('');
 
@@ -84,15 +84,13 @@ export default function ChecklistEditor({ taskId }: ChecklistEditorProps) {
                 </svg>
               )}
             </button>
-            <span
-              className="flex-1 text-sm"
-              style={{
-                color: item.completed ? 'var(--color-text-tertiary)' : 'var(--color-text-primary)',
-                textDecoration: item.completed ? 'line-through' : 'none',
+            <ChecklistItemTitle
+              item={item}
+              onSave={async (newTitle) => {
+                await updateChecklistItemTitle(item.id, newTitle);
+                await refresh();
               }}
-            >
-              {item.title}
-            </span>
+            />
             <button
               onClick={() => handleDelete(item.id)}
               data-testid={`checklist-delete-${item.id}`}
@@ -126,5 +124,72 @@ export default function ChecklistEditor({ taskId }: ChecklistEditorProps) {
         />
       </div>
     </div>
+  );
+}
+
+function ChecklistItemTitle({
+  item,
+  onSave,
+}: {
+  item: ChecklistItem;
+  onSave: (title: string) => Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(item.title);
+
+  // Sync if item changes externally
+  useEffect(() => {
+    setValue(item.title);
+  }, [item.title]);
+
+  const commit = async () => {
+    setEditing(false);
+    const trimmed = value.trim();
+    if (trimmed && trimmed !== item.title) {
+      await onSave(trimmed);
+    } else {
+      setValue(item.title);
+    }
+  };
+
+  if (editing) {
+    return (
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            (e.target as HTMLInputElement).blur();
+          }
+          if (e.key === 'Escape') {
+            setValue(item.title);
+            setEditing(false);
+          }
+        }}
+        autoFocus
+        data-testid={`checklist-edit-${item.id}`}
+        className="flex-1 text-sm bg-transparent outline-none"
+        style={{
+          color: item.completed ? 'var(--color-text-tertiary)' : 'var(--color-text-primary)',
+          textDecoration: item.completed ? 'line-through' : 'none',
+        }}
+      />
+    );
+  }
+
+  return (
+    <span
+      onClick={() => setEditing(true)}
+      className="flex-1 text-sm cursor-text"
+      style={{
+        color: item.completed ? 'var(--color-text-tertiary)' : 'var(--color-text-primary)',
+        textDecoration: item.completed ? 'line-through' : 'none',
+      }}
+    >
+      {item.title}
+    </span>
   );
 }

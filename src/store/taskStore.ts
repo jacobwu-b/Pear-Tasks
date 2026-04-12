@@ -48,6 +48,7 @@ interface TaskState {
   loadChecklist: (taskId: string) => Promise<ChecklistItem[]>;
   addChecklistItem: (taskId: string, title: string) => Promise<void>;
   toggleChecklistItem: (id: string, completed: boolean) => Promise<void>;
+  updateChecklistItemTitle: (id: string, title: string) => Promise<void>;
   deleteChecklistItem: (id: string) => Promise<void>;
 }
 
@@ -138,6 +139,10 @@ export const useTaskStore = create<TaskState>((set, get) => ({
 
   toggleChecklistItem: async (id, completed) => {
     await dbUpdateChecklistItem(id, { completed });
+  },
+
+  updateChecklistItemTitle: async (id, title) => {
+    await dbUpdateChecklistItem(id, { title });
   },
 
   deleteChecklistItem: async (id) => {
