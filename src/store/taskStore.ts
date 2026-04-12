@@ -1,21 +1,151 @@
 import { create } from 'zustand';
-import type { Area, Project } from '../types';
-import { getAreas, getProjects } from '../db/operations';
+import type { Area, Project, Task, ChecklistItem } from '../types';
+import type { SidebarView } from './uiStore';
+import {
+  getAreas,
+  getProjects,
+  getInboxTasks,
+  getTodayTasks,
+  getUpcomingTasks,
+  getAnytimeTasks,
+  getSomedayTasks,
+  getLogbookTasks,
+  getTrashTasks,
+  getTasksByProject,
+  getTasksByArea,
+  updateTask as dbUpdateTask,
+  createTask as dbCreateTask,
+  softDeleteTask as dbSoftDeleteTask,
+  restoreTask as dbRestoreTask,
+  getChecklistItems,
+  addChecklistItem as dbAddChecklistItem,
+  updateChecklistItem as dbUpdateChecklistItem,
+  deleteChecklistItem as dbDeleteChecklistItem,
+} from '../db/operations';
 
 interface TaskState {
   areas: Area[];
   projects: Project[];
+  tasks: Task[];
+  /** Currently loaded view (to know when to reload) */
+  currentView: SidebarView | null;
 
-  /** Reload areas and projects from Dexie into the store */
   loadSidebarData: () => Promise<void>;
+  loadTasksForView: (view: SidebarView) => Promise<void>;
+  /** Reload tasks for the currently loaded view */
+  refreshTasks: () => Promise<void>;
+
+  // Mutation wrappers: write to Dexie, then refresh
+  completeTask: (id: string) => Promise<void>;
+  cancelTask: (id: string) => Promise<void>;
+  reopenTask: (id: string) => Promise<void>;
+  updateTaskField: (id: string, changes: Partial<Omit<Task, 'id' | 'createdAt'>>) => Promise<void>;
+  createNewTask: (title: string, options?: Partial<Pick<Task, 'projectId' | 'areaId' | 'when' | 'deadline' | 'tags'>>) => Promise<Task | null>;
+  deleteTask: (id: string) => Promise<void>;
+  restoreTask: (id: string) => Promise<void>;
+
+  // Checklist
+  loadChecklist: (taskId: string) => Promise<ChecklistItem[]>;
+  addChecklistItem: (taskId: string, title: string) => Promise<void>;
+  toggleChecklistItem: (id: string, completed: boolean) => Promise<void>;
+  updateChecklistItemTitle: (id: string, title: string) => Promise<void>;
+  deleteChecklistItem: (id: string) => Promise<void>;
 }
 
-export const useTaskStore = create<TaskState>((set) => ({
+async function fetchTasksForView(view: SidebarView): Promise<Task[]> {
+  if (typeof view === 'string') {
+    switch (view) {
+      case 'inbox': return getInboxTasks();
+      case 'today': return getTodayTasks();
+      case 'upcoming': return getUpcomingTasks();
+      case 'anytime': return getAnytimeTasks();
+      case 'someday': return getSomedayTasks();
+      case 'logbook': return getLogbookTasks();
+      case 'trash': return getTrashTasks();
+    }
+  }
+  if (view.type === 'project') return getTasksByProject(view.projectId);
+  if (view.type === 'area') return getTasksByArea(view.areaId);
+  return [];
+}
+
+export const useTaskStore = create<TaskState>((set, get) => ({
   areas: [],
   projects: [],
+  tasks: [],
+  currentView: null,
 
   loadSidebarData: async () => {
     const [areas, projects] = await Promise.all([getAreas(), getProjects()]);
     set({ areas, projects });
+  },
+
+  loadTasksForView: async (view) => {
+    const tasks = await fetchTasksForView(view);
+    set({ tasks, currentView: view });
+  },
+
+  refreshTasks: async () => {
+    const { currentView } = get();
+    if (!currentView) return;
+    const tasks = await fetchTasksForView(currentView);
+    set({ tasks });
+  },
+
+  completeTask: async (id) => {
+    await dbUpdateTask(id, { status: 'completed', completedAt: Date.now() });
+    await get().refreshTasks();
+  },
+
+  cancelTask: async (id) => {
+    await dbUpdateTask(id, { status: 'canceled', completedAt: Date.now() });
+    await get().refreshTasks();
+  },
+
+  reopenTask: async (id) => {
+    await dbUpdateTask(id, { status: 'open', completedAt: null });
+    await get().refreshTasks();
+  },
+
+  updateTaskField: async (id, changes) => {
+    await dbUpdateTask(id, changes);
+    await get().refreshTasks();
+  },
+
+  createNewTask: async (title, options) => {
+    const result = await dbCreateTask(title, options);
+    await get().refreshTasks();
+    await get().loadSidebarData();
+    return result.data;
+  },
+
+  deleteTask: async (id) => {
+    await dbSoftDeleteTask(id);
+    await get().refreshTasks();
+  },
+
+  restoreTask: async (id) => {
+    await dbRestoreTask(id);
+    await get().refreshTasks();
+  },
+
+  loadChecklist: async (taskId) => {
+    return getChecklistItems(taskId);
+  },
+
+  addChecklistItem: async (taskId, title) => {
+    await dbAddChecklistItem(taskId, title);
+  },
+
+  toggleChecklistItem: async (id, completed) => {
+    await dbUpdateChecklistItem(id, { completed });
+  },
+
+  updateChecklistItemTitle: async (id, title) => {
+    await dbUpdateChecklistItem(id, { title });
+  },
+
+  deleteChecklistItem: async (id) => {
+    await dbDeleteChecklistItem(id);
   },
 }));

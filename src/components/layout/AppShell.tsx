@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useUiStore } from '../../store/uiStore';
 import Sidebar from './Sidebar';
-import TaskListPlaceholder from './TaskListPlaceholder';
-import DetailPanelPlaceholder from './DetailPanelPlaceholder';
+import TaskList from '../tasks/TaskList';
+import TaskDetail from '../tasks/TaskDetail';
 
 const MOBILE_BREAKPOINT = 640;
 
@@ -118,7 +118,7 @@ export default function AppShell() {
 
         {/* Task list */}
         <div className="flex-1 overflow-y-auto">
-          <TaskListPlaceholder />
+          <TaskList />
         </div>
       </div>
 
@@ -131,7 +131,7 @@ export default function AppShell() {
             borderLeft: '1px solid var(--color-border-primary)',
           }}
         >
-          <DetailPanelPlaceholder />
+          <TaskDetail />
         </div>
       )}
     </div>

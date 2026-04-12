@@ -1,0 +1,200 @@
+import { useEffect, useMemo, useState } from 'react';
+import { useUiStore, type SidebarView } from '../../store/uiStore';
+import { useTaskStore } from '../../store/taskStore';
+import { useViewTasks } from '../../hooks/useViewTasks';
+import { getDependencyEdges } from '../../db/operations';
+import type { DependencyEdge, Task } from '../../types';
+import TaskRow from './TaskRow';
+
+function viewTitle(
+  view: SidebarView,
+  projects: { id: string; title: string }[],
+  areas: { id: string; title: string }[]
+): string {
+  if (typeof view === 'string') {
+    const labels: Record<string, string> = {
+      inbox: 'Inbox',
+      today: 'Today',
+      upcoming: 'Upcoming',
+      anytime: 'Anytime',
+      someday: 'Someday',
+      logbook: 'Logbook',
+      trash: 'Trash',
+    };
+    return labels[view] ?? view;
+  }
+  if (view.type === 'project') {
+    return projects.find((p) => p.id === view.projectId)?.title ?? 'Project';
+  }
+  return areas.find((a) => a.id === view.areaId)?.title ?? 'Area';
+}
+
+function emptyMessage(view: SidebarView): string {
+  if (typeof view === 'string') {
+    switch (view) {
+      case 'inbox': return 'Your inbox is empty. Nice work!';
+      case 'today': return 'Nothing scheduled for today.';
+      case 'upcoming': return 'No upcoming tasks.';
+      case 'anytime': return 'No open tasks.';
+      case 'someday': return 'Nothing deferred to someday.';
+      case 'logbook': return 'No completed tasks yet.';
+      case 'trash': return 'Trash is empty.';
+    }
+  }
+  return 'No tasks in this view.';
+}
+
+export default function TaskList() {
+  const { sidebarView } = useUiStore();
+  const { projects, areas, createNewTask } = useTaskStore();
+  const tasks = useViewTasks();
+
+  // Load dependency edges for project views to show blocked indicators
+  const [edges, setEdges] = useState<DependencyEdge[]>([]);
+  const projectId = typeof sidebarView === 'object' && sidebarView.type === 'project'
+    ? sidebarView.projectId
+    : null;
+
+  useEffect(() => {
+    if (projectId) {
+      getDependencyEdges(projectId).then(setEdges);
+    } else {
+      setEdges([]);
+    }
+  }, [projectId, tasks]); // re-fetch edges when tasks change
+
+  // Compute blocked counts per task
+  const blockedCounts = useMemo(() => {
+    if (edges.length === 0) return new Map<string, number>();
+
+    const completedIds = new Set(
+      tasks.filter((t) => t.status === 'completed').map((t) => t.id)
+    );
+    const counts = new Map<string, number>();
+    for (const edge of edges) {
+      if (!completedIds.has(edge.fromTaskId)) {
+        counts.set(edge.toTaskId, (counts.get(edge.toTaskId) ?? 0) + 1);
+      }
+    }
+    return counts;
+  }, [edges, tasks]);
+
+  const title = viewTitle(sidebarView, projects, areas);
+  const isTrash = sidebarView === 'trash';
+
+  // Group upcoming tasks by date
+  const isUpcoming = sidebarView === 'upcoming';
+  const groupedTasks = useMemo(() => {
+    if (!isUpcoming) return null;
+    const groups = new Map<string, Task[]>();
+    for (const task of tasks) {
+      const date = task.when ?? 'Unscheduled';
+      const group = groups.get(date);
+      if (group) {
+        group.push(task);
+      } else {
+        groups.set(date, [task]);
+      }
+    }
+    return groups;
+  }, [isUpcoming, tasks]);
+
+  const handleAddTask = async () => {
+    const options: Partial<Pick<Task, 'projectId' | 'areaId' | 'when'>> = {};
+    if (typeof sidebarView === 'object' && sidebarView.type === 'project') {
+      options.projectId = sidebarView.projectId;
+    }
+    if (sidebarView === 'today') {
+      options.when = new Date().toISOString().split('T')[0];
+    }
+    if (sidebarView === 'someday') {
+      options.when = 'someday';
+    }
+    await createNewTask('New Task', options);
+  };
+
+  return (
+    <div className="h-full flex flex-col">
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 pt-4 pb-2">
+        <h1
+          className="text-2xl font-bold"
+          data-testid="view-title"
+          style={{ color: 'var(--color-text-primary)' }}
+        >
+          {title}
+        </h1>
+        {!isTrash && (
+          <button
+            onClick={handleAddTask}
+            data-testid="add-task-btn"
+            className="flex items-center gap-1 px-2.5 py-1 rounded-md text-sm font-medium transition-colors cursor-pointer"
+            style={{
+              color: 'var(--color-accent)',
+              backgroundColor: 'var(--color-accent-subtle)',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = 'var(--color-accent)';
+              e.currentTarget.style.color = 'var(--color-text-inverse)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = 'var(--color-accent-subtle)';
+              e.currentTarget.style.color = 'var(--color-accent)';
+            }}
+          >
+            <svg viewBox="0 0 16 16" fill="currentColor" className="w-4 h-4">
+              <path d="M8 2a.75.75 0 01.75.75v4.5h4.5a.75.75 0 010 1.5h-4.5v4.5a.75.75 0 01-1.5 0v-4.5h-4.5a.75.75 0 010-1.5h4.5v-4.5A.75.75 0 018 2z" />
+            </svg>
+            Add Task
+          </button>
+        )}
+      </div>
+
+      {/* Task list */}
+      <div className="flex-1 overflow-y-auto">
+        {tasks.length === 0 ? (
+          <p
+            className="px-4 py-8 text-sm text-center"
+            style={{ color: 'var(--color-text-tertiary)' }}
+            data-testid="empty-message"
+          >
+            {emptyMessage(sidebarView)}
+          </p>
+        ) : isUpcoming && groupedTasks ? (
+          Array.from(groupedTasks.entries()).map(([date, dateTasks]) => (
+            <div key={date}>
+              <div
+                className="px-4 py-1.5 text-xs font-semibold uppercase tracking-wide sticky top-0"
+                style={{
+                  color: 'var(--color-text-tertiary)',
+                  backgroundColor: 'var(--color-surface-primary)',
+                  borderBottom: '1px solid var(--color-border-primary)',
+                }}
+              >
+                {formatGroupDate(date)}
+              </div>
+              {dateTasks.map((task) => (
+                <TaskRow key={task.id} task={task} blockedByCount={blockedCounts.get(task.id) ?? 0} />
+              ))}
+            </div>
+          ))
+        ) : (
+          tasks.map((task) => (
+            <TaskRow key={task.id} task={task} blockedByCount={blockedCounts.get(task.id) ?? 0} />
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+function formatGroupDate(date: string): string {
+  if (date === 'Unscheduled') return date;
+  const today = new Date().toISOString().split('T')[0];
+  if (date === today) return 'Today';
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  if (date === tomorrow.toISOString().split('T')[0]) return 'Tomorrow';
+  const d = new Date(date + 'T00:00:00');
+  return d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
+}

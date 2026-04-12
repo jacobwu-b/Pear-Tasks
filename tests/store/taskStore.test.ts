@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { db } from '../../src/db/schema';
-import { createArea, createProject } from '../../src/db/operations';
+import { createArea, createProject, createTask, updateTask } from '../../src/db/operations';
 import { useTaskStore } from '../../src/store/taskStore';
 
 beforeEach(async () => {
   await db.delete();
   await db.open();
-  useTaskStore.setState({ areas: [], projects: [] });
+  useTaskStore.setState({ areas: [], projects: [], tasks: [], currentView: null });
 });
 
 describe('taskStore', () => {
@@ -14,6 +14,7 @@ describe('taskStore', () => {
     const state = useTaskStore.getState();
     expect(state.areas).toEqual([]);
     expect(state.projects).toEqual([]);
+    expect(state.tasks).toEqual([]);
   });
 
   it('loads areas from Dexie', async () => {
@@ -51,5 +52,95 @@ describe('taskStore', () => {
     const { projects } = useTaskStore.getState();
     expect(projects).toHaveLength(1);
     expect(projects[0].title).toBe('Active');
+  });
+
+  // -- View loading tests --
+
+  it('loads inbox tasks (no project, no when)', async () => {
+    await createTask('Inbox task');
+    await createTask('Scheduled', { when: '2026-05-01' });
+    const { data: project } = await createProject('P1');
+    await createTask('Project task', { projectId: project!.id });
+
+    await useTaskStore.getState().loadTasksForView('inbox');
+
+    const { tasks } = useTaskStore.getState();
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].title).toBe('Inbox task');
+  });
+
+  it('loads tasks for a project view', async () => {
+    const { data: project } = await createProject('P1');
+    await createTask('T1', { projectId: project!.id });
+    await createTask('T2', { projectId: project!.id });
+    await createTask('Unrelated');
+
+    await useTaskStore.getState().loadTasksForView({ type: 'project', projectId: project!.id });
+
+    const { tasks } = useTaskStore.getState();
+    expect(tasks).toHaveLength(2);
+    expect(tasks.map((t) => t.title)).toContain('T1');
+    expect(tasks.map((t) => t.title)).toContain('T2');
+  });
+
+  it('loads someday tasks', async () => {
+    await createTask('Someday task', { when: 'someday' });
+    await createTask('Normal task');
+
+    await useTaskStore.getState().loadTasksForView('someday');
+
+    const { tasks } = useTaskStore.getState();
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].title).toBe('Someday task');
+  });
+
+  it('loads logbook tasks sorted by completedAt desc', async () => {
+    const { data: t1 } = await createTask('First completed');
+    const { data: t2 } = await createTask('Second completed');
+    await updateTask(t1!.id, { status: 'completed', completedAt: 1000 });
+    await updateTask(t2!.id, { status: 'completed', completedAt: 2000 });
+
+    await useTaskStore.getState().loadTasksForView('logbook');
+
+    const { tasks } = useTaskStore.getState();
+    expect(tasks).toHaveLength(2);
+    expect(tasks[0].title).toBe('Second completed');
+    expect(tasks[1].title).toBe('First completed');
+  });
+
+  // -- Mutation wrapper tests --
+
+  it('completeTask marks task completed and refreshes', async () => {
+    const { data: task } = await createTask('Do this');
+    await useTaskStore.getState().loadTasksForView('inbox');
+
+    await useTaskStore.getState().completeTask(task!.id);
+
+    // Inbox should now be empty (completed tasks leave inbox)
+    const { tasks } = useTaskStore.getState();
+    expect(tasks).toHaveLength(0);
+  });
+
+  it('reopenTask marks task open and refreshes', async () => {
+    const { data: task } = await createTask('Do this');
+    await updateTask(task!.id, { status: 'completed', completedAt: Date.now() });
+    await useTaskStore.getState().loadTasksForView('logbook');
+    expect(useTaskStore.getState().tasks).toHaveLength(1);
+
+    await useTaskStore.getState().reopenTask(task!.id);
+
+    // Should leave logbook after reopening
+    const { tasks } = useTaskStore.getState();
+    expect(tasks).toHaveLength(0);
+  });
+
+  it('deleteTask soft-deletes and refreshes', async () => {
+    const { data: task } = await createTask('Delete me');
+    await useTaskStore.getState().loadTasksForView('inbox');
+    expect(useTaskStore.getState().tasks).toHaveLength(1);
+
+    await useTaskStore.getState().deleteTask(task!.id);
+
+    expect(useTaskStore.getState().tasks).toHaveLength(0);
   });
 });

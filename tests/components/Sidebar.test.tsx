@@ -1,15 +1,18 @@
 // @vitest-environment happy-dom
-import { describe, it, expect, beforeEach } from 'vitest';
-import { render, screen, fireEvent, act } from '@testing-library/react';
-import { db } from '../../src/db/schema';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { render, screen, fireEvent, act, cleanup } from '@testing-library/react';
 import { createArea, createProject } from '../../src/db/operations';
 import { useUiStore } from '../../src/store/uiStore';
 import { useTaskStore } from '../../src/store/taskStore';
 import Sidebar from '../../src/components/layout/Sidebar';
+import { clearDatabase } from '../helpers';
+
+afterEach(() => {
+  cleanup();
+});
 
 beforeEach(async () => {
-  await db.delete();
-  await db.open();
+  await clearDatabase();
   useUiStore.setState({
     sidebarView: 'inbox',
     selectedTaskId: null,
