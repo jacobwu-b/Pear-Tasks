@@ -233,6 +233,68 @@ export async function getDeletedItems(): Promise<{ tasks: Task[]; projects: Proj
   return { tasks, projects };
 }
 
+export async function getAnytimeTasks(): Promise<Task[]> {
+  return db.tasks
+    .filter(
+      (t) =>
+        t.deletedAt === null &&
+        t.status === 'open' &&
+        t.when !== 'someday'
+    )
+    .sortBy('sortOrder');
+}
+
+export async function getSomedayTasks(): Promise<Task[]> {
+  return db.tasks
+    .filter(
+      (t) =>
+        t.deletedAt === null &&
+        t.status === 'open' &&
+        t.when === 'someday'
+    )
+    .sortBy('sortOrder');
+}
+
+export async function getUpcomingTasks(): Promise<Task[]> {
+  const today = new Date().toISOString().split('T')[0];
+  const tasks = await db.tasks
+    .filter(
+      (t) =>
+        t.deletedAt === null &&
+        t.status === 'open' &&
+        t.when !== null &&
+        t.when !== 'someday' &&
+        t.when > today
+    )
+    .toArray();
+  // Sort chronologically by when date
+  return tasks.sort((a, b) => (a.when! > b.when! ? 1 : -1));
+}
+
+export async function getLogbookTasks(): Promise<Task[]> {
+  const tasks = await db.tasks
+    .filter(
+      (t) =>
+        t.deletedAt === null &&
+        (t.status === 'completed' || t.status === 'canceled')
+    )
+    .toArray();
+  // Reverse chronological by completedAt
+  return tasks.sort((a, b) => (b.completedAt ?? 0) - (a.completedAt ?? 0));
+}
+
+export async function getTasksByArea(areaId: string): Promise<Task[]> {
+  return db.tasks
+    .where('areaId')
+    .equals(areaId)
+    .filter((t) => t.deletedAt === null && t.status === 'open')
+    .sortBy('sortOrder');
+}
+
+export async function getTrashTasks(): Promise<Task[]> {
+  return db.tasks.filter((t) => t.deletedAt !== null).toArray();
+}
+
 // ── Checklist Items ────────────────────────────────────────────────
 
 export async function addChecklistItem(
