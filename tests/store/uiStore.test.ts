@@ -7,6 +7,7 @@ beforeEach(() => {
     sidebarView: 'inbox',
     selectedTaskId: null,
     sidebarCollapsed: false,
+    mobileSidebarOpen: false,
   });
 });
 
@@ -58,5 +59,17 @@ describe('uiStore', () => {
   it('sets sidebar collapsed directly', () => {
     useUiStore.getState().setSidebarCollapsed(true);
     expect(useUiStore.getState().sidebarCollapsed).toBe(true);
+  });
+
+  it('defaults mobileSidebarOpen to false', () => {
+    expect(useUiStore.getState().mobileSidebarOpen).toBe(false);
+  });
+
+  it('opens and closes mobile sidebar', () => {
+    useUiStore.getState().setMobileSidebarOpen(true);
+    expect(useUiStore.getState().mobileSidebarOpen).toBe(true);
+
+    useUiStore.getState().setMobileSidebarOpen(false);
+    expect(useUiStore.getState().mobileSidebarOpen).toBe(false);
   });
 });

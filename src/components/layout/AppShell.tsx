@@ -1,28 +1,93 @@
+import { useCallback, useEffect, useState } from 'react';
 import { useUiStore } from '../../store/uiStore';
 import Sidebar from './Sidebar';
 import TaskListPlaceholder from './TaskListPlaceholder';
 import DetailPanelPlaceholder from './DetailPanelPlaceholder';
 
+const MOBILE_BREAKPOINT = 640;
+
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(
+    typeof window !== 'undefined' ? window.innerWidth < MOBILE_BREAKPOINT : false
+  );
+
+  useEffect(() => {
+    const mq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT - 1}px)`);
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
+
+  return isMobile;
+}
+
 export default function AppShell() {
-  const { sidebarCollapsed, selectedTaskId, toggleSidebar } = useUiStore();
+  const {
+    sidebarCollapsed,
+    mobileSidebarOpen,
+    selectedTaskId,
+    toggleSidebar,
+    setMobileSidebarOpen,
+  } = useUiStore();
+
+  const isMobile = useIsMobile();
+
+  const handleHamburgerClick = useCallback(() => {
+    if (isMobile) {
+      setMobileSidebarOpen(!mobileSidebarOpen);
+    } else {
+      toggleSidebar();
+    }
+  }, [isMobile, mobileSidebarOpen, setMobileSidebarOpen, toggleSidebar]);
+
+  // Close mobile sidebar when resizing above breakpoint
+  useEffect(() => {
+    if (!isMobile && mobileSidebarOpen) {
+      setMobileSidebarOpen(false);
+    }
+  }, [isMobile, mobileSidebarOpen, setMobileSidebarOpen]);
+
+  const closeMobileSidebar = useCallback(() => {
+    setMobileSidebarOpen(false);
+  }, [setMobileSidebarOpen]);
 
   return (
     <div
-      className="h-screen flex overflow-hidden"
+      className="h-screen flex overflow-hidden relative"
       style={{
         backgroundColor: 'var(--color-surface-primary)',
         color: 'var(--color-text-primary)',
         fontFamily: 'var(--font-sans)',
       }}
     >
-      {/* Sidebar */}
-      {!sidebarCollapsed && (
+      {/* Desktop sidebar — inline */}
+      {!isMobile && !sidebarCollapsed && (
         <div
-          className="shrink-0 h-full hidden sm:block"
+          className="shrink-0 h-full"
           style={{ width: 'var(--sidebar-width)' }}
         >
           <Sidebar />
         </div>
+      )}
+
+      {/* Mobile sidebar — slide-over overlay */}
+      {isMobile && mobileSidebarOpen && (
+        <>
+          {/* Backdrop */}
+          <div
+            data-testid="sidebar-backdrop"
+            className="fixed inset-0 z-40 transition-opacity"
+            style={{ backgroundColor: 'rgba(0, 0, 0, 0.4)' }}
+            onClick={closeMobileSidebar}
+          />
+          {/* Sidebar drawer */}
+          <div
+            className="fixed inset-y-0 left-0 z-50 h-full shadow-lg"
+            style={{ width: 'var(--sidebar-width)' }}
+          >
+            <Sidebar onNavigate={closeMobileSidebar} />
+          </div>
+        </>
       )}
 
       {/* Center column — task list */}
@@ -33,7 +98,7 @@ export default function AppShell() {
           style={{ borderBottom: '1px solid var(--color-border-primary)' }}
         >
           <button
-            onClick={toggleSidebar}
+            onClick={handleHamburgerClick}
             data-testid="toggle-sidebar"
             className="p-1.5 rounded-md transition-colors cursor-pointer"
             style={{ color: 'var(--color-text-secondary)' }}

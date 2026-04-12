@@ -104,7 +104,12 @@ function viewKey(view: SidebarView): string {
 
 // ── Component ──────────────────────────────────────────────────────
 
-export default function Sidebar() {
+interface SidebarProps {
+  /** Called after any navigation item is selected (used to close mobile overlay) */
+  onNavigate?: () => void;
+}
+
+export default function Sidebar({ onNavigate }: SidebarProps) {
   const { sidebarView, setSidebarView } = useUiStore();
   const { areas, projects, loadSidebarData } = useTaskStore();
 
@@ -113,6 +118,11 @@ export default function Sidebar() {
   }, [loadSidebarData]);
 
   const currentKey = viewKey(sidebarView);
+
+  const handleNav = (view: SidebarView) => {
+    setSidebarView(view);
+    onNavigate?.();
+  };
 
   return (
     <nav
@@ -130,7 +140,7 @@ export default function Sidebar() {
           return (
             <button
               key={key}
-              onClick={() => setSidebarView(key as SidebarView)}
+              onClick={() => handleNav(key as SidebarView)}
               data-testid={`sidebar-${key}`}
               className="flex items-center gap-2.5 w-full px-2.5 py-1.5 rounded-md text-sm font-medium transition-colors cursor-pointer"
               style={{
@@ -164,7 +174,7 @@ export default function Sidebar() {
             area={area}
             projects={projects.filter((p) => p.areaId === area.id)}
             currentKey={currentKey}
-            onSelect={setSidebarView}
+            onSelect={handleNav}
           />
         ))}
 
@@ -176,7 +186,7 @@ export default function Sidebar() {
               key={project.id}
               project={project}
               active={currentKey === `project:${project.id}`}
-              onSelect={() => setSidebarView({ type: 'project', projectId: project.id })}
+              onSelect={() => handleNav({ type: 'project', projectId: project.id })}
             />
           ))}
       </div>

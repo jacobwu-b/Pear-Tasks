@@ -14,6 +14,7 @@ beforeEach(async () => {
     sidebarView: 'inbox',
     selectedTaskId: null,
     sidebarCollapsed: false,
+    mobileSidebarOpen: false,
   });
   useTaskStore.setState({ areas: [], projects: [] });
 });
