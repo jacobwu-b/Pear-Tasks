@@ -211,7 +211,7 @@ export async function getTasksByProject(projectId: string): Promise<Task[]> {
 
 export async function getInboxTasks(): Promise<Task[]> {
   return db.tasks
-    .filter((t) => t.projectId === null && t.when === null && t.deletedAt === null)
+    .filter((t) => t.projectId === null && t.when === null && t.deletedAt === null && t.status === 'open')
     .sortBy('sortOrder');
 }
 
