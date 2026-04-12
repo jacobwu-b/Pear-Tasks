@@ -1,9 +1,7 @@
+import AppShell from './components/layout/AppShell'
+
 function App() {
-  return (
-    <div>
-      <h1>Pear</h1>
-    </div>
-  )
+  return <AppShell />
 }
 
 export default App

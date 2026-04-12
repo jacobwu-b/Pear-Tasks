@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Area, Project, Task } from '../types';
+import type { Area, Project } from '../types';
 import { getAreas, getProjects } from '../db/operations';
 
 interface TaskState {
