@@ -6,6 +6,7 @@ import { getDependencyEdges } from '../../db/operations';
 import type { DependencyEdge, Task } from '../../types';
 import TaskRow from './TaskRow';
 import LinkModeToolbar from '../dependencies/LinkModeToolbar';
+import GraphView from '../projects/GraphView';
 
 function viewTitle(
   view: SidebarView,
@@ -179,6 +180,11 @@ export default function TaskList() {
           )}
         </div>
       </div>
+
+      {/* Dependency graph panel — shown on top for project views with edges */}
+      {projectId && (
+        <GraphView tasks={tasks} edges={edges} />
+      )}
 
       {/* Task list */}
       <div className="flex-1 overflow-y-auto">
