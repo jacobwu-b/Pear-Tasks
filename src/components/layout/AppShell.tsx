@@ -3,6 +3,7 @@ import { useUiStore } from '../../store/uiStore';
 import Sidebar from './Sidebar';
 import TaskList from '../tasks/TaskList';
 import TaskDetail from '../tasks/TaskDetail';
+import TemplatePicker from '../templates/TemplatePicker';
 
 const MOBILE_BREAKPOINT = 640;
 
@@ -31,6 +32,12 @@ export default function AppShell() {
   } = useUiStore();
 
   const isMobile = useIsMobile();
+  const [showTemplatePicker, setShowTemplatePicker] = useState(false);
+
+  const handleNewProject = useCallback(() => {
+    setShowTemplatePicker(true);
+    if (isMobile) setMobileSidebarOpen(false);
+  }, [isMobile, setMobileSidebarOpen]);
 
   const handleHamburgerClick = useCallback(() => {
     if (isMobile) {
@@ -66,7 +73,7 @@ export default function AppShell() {
           className="shrink-0 h-full"
           style={{ width: 'var(--sidebar-width)' }}
         >
-          <Sidebar />
+          <Sidebar onNewProject={handleNewProject} />
         </div>
       )}
 
@@ -85,7 +92,7 @@ export default function AppShell() {
             className="fixed inset-y-0 left-0 z-50 h-full shadow-lg"
             style={{ width: 'var(--sidebar-width)' }}
           >
-            <Sidebar onNavigate={closeMobileSidebar} />
+            <Sidebar onNavigate={closeMobileSidebar} onNewProject={handleNewProject} />
           </div>
         </>
       )}
@@ -133,6 +140,11 @@ export default function AppShell() {
         >
           <TaskDetail />
         </div>
+      )}
+
+      {/* Template picker modal */}
+      {showTemplatePicker && (
+        <TemplatePicker onClose={() => setShowTemplatePicker(false)} />
       )}
     </div>
   );

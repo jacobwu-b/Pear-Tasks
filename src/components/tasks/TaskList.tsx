@@ -7,6 +7,7 @@ import type { DependencyEdge, Task } from '../../types';
 import TaskRow from './TaskRow';
 import LinkModeToolbar from '../dependencies/LinkModeToolbar';
 import GraphView from '../projects/GraphView';
+import SaveAsTemplateDialog from '../templates/SaveAsTemplateDialog';
 
 function viewTitle(
   view: SidebarView,
@@ -50,6 +51,7 @@ export default function TaskList() {
   const { sidebarView, linkMode, enterLinkMode } = useUiStore();
   const { projects, areas, createNewTask } = useTaskStore();
   const tasks = useViewTasks();
+  const [showSaveTemplate, setShowSaveTemplate] = useState(false);
 
   // Load dependency edges for project views to show blocked indicators
   const [edges, setEdges] = useState<DependencyEdge[]>([]);
@@ -154,6 +156,30 @@ export default function TaskList() {
               Link
             </button>
           )}
+          {/* Save as Template — only for project views */}
+          {projectId && (
+            <button
+              onClick={() => setShowSaveTemplate(true)}
+              data-testid="save-as-template-btn"
+              className="flex items-center gap-1 px-2.5 py-1 rounded-md text-sm font-medium transition-colors cursor-pointer"
+              style={{
+                color: 'var(--color-text-secondary)',
+                backgroundColor: 'transparent',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = 'var(--color-surface-hover)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = 'transparent';
+              }}
+              title="Save this project as a reusable template"
+            >
+              <svg viewBox="0 0 16 16" fill="currentColor" className="w-4 h-4">
+                <path d="M2 4a2 2 0 012-2h4.586A2 2 0 0110 2.586L13.414 6A2 2 0 0114 7.414V12a2 2 0 01-2 2H4a2 2 0 01-2-2V4zm2 0v8h8V7.414L8.586 4H4z" />
+              </svg>
+              Template
+            </button>
+          )}
           {!isTrash && (
             <button
               onClick={handleAddTask}
@@ -220,6 +246,15 @@ export default function TaskList() {
           ))
         )}
       </div>
+
+      {/* Save as Template dialog */}
+      {showSaveTemplate && projectId && (
+        <SaveAsTemplateDialog
+          projectId={projectId}
+          projectName={title}
+          onClose={() => setShowSaveTemplate(false)}
+        />
+      )}
     </div>
   );
 }
