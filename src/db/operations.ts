@@ -1,5 +1,5 @@
 import { db } from './schema';
-import { wouldCreateCycle } from './graph';
+import { wouldCreateCycle, getBlockedTaskIds } from './graph';
 import type {
   Area,
   Project,
@@ -217,7 +217,7 @@ export async function getInboxTasks(): Promise<Task[]> {
 
 export async function getTodayTasks(): Promise<Task[]> {
   const today = new Date().toISOString().split('T')[0];
-  return db.tasks
+  const tasks = await db.tasks
     .filter(
       (t) =>
         t.deletedAt === null &&
@@ -225,6 +225,10 @@ export async function getTodayTasks(): Promise<Task[]> {
         (t.when === today || (t.deadline !== null && t.deadline <= today))
     )
     .sortBy('sortOrder');
+
+  // Filter out blocked tasks
+  const blocked = await getAllBlockedTaskIds();
+  return tasks.filter((t) => !blocked.has(t.id));
 }
 
 export async function getDeletedItems(): Promise<{ tasks: Task[]; projects: Project[] }> {
@@ -234,7 +238,7 @@ export async function getDeletedItems(): Promise<{ tasks: Task[]; projects: Proj
 }
 
 export async function getAnytimeTasks(): Promise<Task[]> {
-  return db.tasks
+  const tasks = await db.tasks
     .filter(
       (t) =>
         t.deletedAt === null &&
@@ -242,6 +246,10 @@ export async function getAnytimeTasks(): Promise<Task[]> {
         t.when !== 'someday'
     )
     .sortBy('sortOrder');
+
+  // Filter out blocked tasks
+  const blocked = await getAllBlockedTaskIds();
+  return tasks.filter((t) => !blocked.has(t.id));
 }
 
 export async function getSomedayTasks(): Promise<Task[]> {
@@ -293,6 +301,21 @@ export async function getTasksByArea(areaId: string): Promise<Task[]> {
 
 export async function getTrashTasks(): Promise<Task[]> {
   return db.tasks.filter((t) => t.deletedAt !== null).toArray();
+}
+
+// ── Blocked task helper ────────────────────────────────────────────
+
+/** Returns IDs of all tasks that are blocked by at least one incomplete predecessor */
+async function getAllBlockedTaskIds(): Promise<Set<string>> {
+  const allEdges = await db.dependencyEdges.toArray();
+  if (allEdges.length === 0) return new Set();
+
+  const completedTasks = await db.tasks
+    .filter((t) => t.status === 'completed' || t.status === 'canceled')
+    .toArray();
+  const completedIds = new Set(completedTasks.map((t) => t.id));
+
+  return getBlockedTaskIds(allEdges, completedIds);
 }
 
 // ── Checklist Items ────────────────────────────────────────────────

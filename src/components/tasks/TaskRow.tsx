@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { Task } from '../../types';
 import { useTaskStore } from '../../store/taskStore';
 import { useUiStore } from '../../store/uiStore';
@@ -9,9 +10,11 @@ interface TaskRowProps {
 }
 
 export default function TaskRow({ task, blockedByCount = 0 }: TaskRowProps) {
-  const { completeTask, reopenTask } = useTaskStore();
-  const { selectedTaskId, setSelectedTaskId } = useUiStore();
+  const { completeTask, reopenTask, addDependency } = useTaskStore();
+  const { selectedTaskId, setSelectedTaskId, linkMode, linkModeFirstTaskId, setLinkModeFirstTask, exitLinkMode } = useUiStore();
+  const [linkError, setLinkError] = useState<string | null>(null);
   const isSelected = selectedTaskId === task.id;
+  const isLinkFirst = linkMode && linkModeFirstTaskId === task.id;
   const isCompleted = task.status === 'completed';
   const isCanceled = task.status === 'canceled';
   const isDone = isCompleted || isCanceled;
@@ -19,6 +22,7 @@ export default function TaskRow({ task, blockedByCount = 0 }: TaskRowProps) {
 
   const handleToggle = async (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (linkMode) return; // ignore toggles in link mode
     if (isBlocked && !isDone) return; // cannot complete blocked tasks
     if (isDone) {
       await reopenTask(task.id);
@@ -27,22 +31,72 @@ export default function TaskRow({ task, blockedByCount = 0 }: TaskRowProps) {
     }
   };
 
+  const handleClick = async () => {
+    if (!linkMode) {
+      setSelectedTaskId(task.id);
+      return;
+    }
+
+    // Link mode: first click sets the blocker, second click creates the edge
+    if (!linkModeFirstTaskId) {
+      setLinkModeFirstTask(task.id);
+      setLinkError(null);
+      return;
+    }
+
+    if (linkModeFirstTaskId === task.id) {
+      // Clicking the same task again — deselect
+      setLinkModeFirstTask(null);
+      return;
+    }
+
+    // Create dependency: first task blocks second task
+    const fromId = linkModeFirstTaskId;
+    const toId = task.id;
+    if (!task.projectId) {
+      setLinkError('Tasks must be in a project');
+      return;
+    }
+    const result = await addDependency(fromId, toId, task.projectId);
+    if (result.error) {
+      setLinkError(result.error);
+      setLinkModeFirstTask(null);
+    } else {
+      exitLinkMode();
+    }
+  };
+
   const deadlineDisplay = task.deadline ? formatDeadline(task.deadline) : null;
   const isOverdue = task.deadline ? task.deadline < new Date().toISOString().split('T')[0] : false;
+
+  const bgColor = isLinkFirst
+    ? 'var(--color-accent-subtle)'
+    : isSelected && !linkMode
+      ? 'var(--color-surface-active)'
+      : 'transparent';
 
   return (
     <div
       data-testid={`task-row-${task.id}`}
-      onClick={() => setSelectedTaskId(task.id)}
+      onClick={handleClick}
       className="flex items-center gap-3 px-4 py-2.5 cursor-pointer transition-colors group"
       style={{
-        backgroundColor: isSelected ? 'var(--color-surface-active)' : 'transparent',
+        backgroundColor: bgColor,
+        outline: isLinkFirst ? '2px solid var(--color-accent)' : 'none',
+        outlineOffset: '-2px',
+        borderRadius: isLinkFirst ? '4px' : undefined,
       }}
       onMouseEnter={(e) => {
-        if (!isSelected) e.currentTarget.style.backgroundColor = 'var(--color-surface-hover)';
+        if (!isLinkFirst && !(isSelected && !linkMode)) {
+          e.currentTarget.style.backgroundColor = linkMode
+            ? 'var(--color-accent-subtle)'
+            : 'var(--color-surface-hover)';
+        }
       }}
       onMouseLeave={(e) => {
-        if (!isSelected) e.currentTarget.style.backgroundColor = 'transparent';
+        if (!isLinkFirst && !(isSelected && !linkMode)) {
+          e.currentTarget.style.backgroundColor = 'transparent';
+        }
       }}
     >
       {/* Checkbox */}
@@ -124,6 +178,17 @@ export default function TaskRow({ task, blockedByCount = 0 }: TaskRowProps) {
               </span>
             )}
           </div>
+        )}
+
+        {/* Link mode error */}
+        {linkError && linkMode && (
+          <p
+            className="text-xs mt-0.5"
+            data-testid="link-mode-error"
+            style={{ color: 'var(--color-status-overdue)' }}
+          >
+            {linkError}
+          </p>
         )}
       </div>
     </div>

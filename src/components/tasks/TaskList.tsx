@@ -5,6 +5,7 @@ import { useViewTasks } from '../../hooks/useViewTasks';
 import { getDependencyEdges } from '../../db/operations';
 import type { DependencyEdge, Task } from '../../types';
 import TaskRow from './TaskRow';
+import LinkModeToolbar from '../dependencies/LinkModeToolbar';
 
 function viewTitle(
   view: SidebarView,
@@ -45,7 +46,7 @@ function emptyMessage(view: SidebarView): string {
 }
 
 export default function TaskList() {
-  const { sidebarView } = useUiStore();
+  const { sidebarView, linkMode, enterLinkMode } = useUiStore();
   const { projects, areas, createNewTask } = useTaskStore();
   const tasks = useViewTasks();
 
@@ -115,6 +116,9 @@ export default function TaskList() {
 
   return (
     <div className="h-full flex flex-col">
+      {/* Link mode toolbar */}
+      <LinkModeToolbar />
+
       {/* Header */}
       <div className="flex items-center justify-between px-4 pt-4 pb-2">
         <h1
@@ -124,30 +128,56 @@ export default function TaskList() {
         >
           {title}
         </h1>
-        {!isTrash && (
-          <button
-            onClick={handleAddTask}
-            data-testid="add-task-btn"
-            className="flex items-center gap-1 px-2.5 py-1 rounded-md text-sm font-medium transition-colors cursor-pointer"
-            style={{
-              color: 'var(--color-accent)',
-              backgroundColor: 'var(--color-accent-subtle)',
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.backgroundColor = 'var(--color-accent)';
-              e.currentTarget.style.color = 'var(--color-text-inverse)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.backgroundColor = 'var(--color-accent-subtle)';
-              e.currentTarget.style.color = 'var(--color-accent)';
-            }}
-          >
-            <svg viewBox="0 0 16 16" fill="currentColor" className="w-4 h-4">
-              <path d="M8 2a.75.75 0 01.75.75v4.5h4.5a.75.75 0 010 1.5h-4.5v4.5a.75.75 0 01-1.5 0v-4.5h-4.5a.75.75 0 010-1.5h4.5v-4.5A.75.75 0 018 2z" />
-            </svg>
-            Add Task
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {/* Link mode button — only for project views */}
+          {projectId && !linkMode && (
+            <button
+              onClick={enterLinkMode}
+              data-testid="enter-link-mode-btn"
+              className="flex items-center gap-1 px-2.5 py-1 rounded-md text-sm font-medium transition-colors cursor-pointer"
+              style={{
+                color: 'var(--color-text-secondary)',
+                backgroundColor: 'transparent',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = 'var(--color-surface-hover)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = 'transparent';
+              }}
+              title="Link dependencies between tasks"
+            >
+              <svg viewBox="0 0 16 16" fill="currentColor" className="w-4 h-4">
+                <path d="M6.354 5.5H4a3 3 0 000 6h3a3 3 0 002.83-4H8.535a2 2 0 01-1.414.586H4.5a2 2 0 110-4h1.854a4 4 0 01-.001-1.5zM9 4h3a3 3 0 010 6h-1.354a4 4 0 00.001-1.5H12a2 2 0 100-4H9.121A3 3 0 009 4z" />
+              </svg>
+              Link
+            </button>
+          )}
+          {!isTrash && (
+            <button
+              onClick={handleAddTask}
+              data-testid="add-task-btn"
+              className="flex items-center gap-1 px-2.5 py-1 rounded-md text-sm font-medium transition-colors cursor-pointer"
+              style={{
+                color: 'var(--color-accent)',
+                backgroundColor: 'var(--color-accent-subtle)',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = 'var(--color-accent)';
+                e.currentTarget.style.color = 'var(--color-text-inverse)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = 'var(--color-accent-subtle)';
+                e.currentTarget.style.color = 'var(--color-accent)';
+              }}
+            >
+              <svg viewBox="0 0 16 16" fill="currentColor" className="w-4 h-4">
+                <path d="M8 2a.75.75 0 01.75.75v4.5h4.5a.75.75 0 010 1.5h-4.5v4.5a.75.75 0 01-1.5 0v-4.5h-4.5a.75.75 0 010-1.5h4.5v-4.5A.75.75 0 018 2z" />
+              </svg>
+              Add Task
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Task list */}

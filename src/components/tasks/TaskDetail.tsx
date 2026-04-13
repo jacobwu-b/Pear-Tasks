@@ -5,6 +5,7 @@ import { getTask } from '../../db/operations';
 import type { Task } from '../../types';
 import ChecklistEditor from './ChecklistEditor';
 import TagEditor from './TagEditor';
+import DependencySection from '../dependencies/DependencySection';
 
 export default function TaskDetail() {
   const { selectedTaskId, setSelectedTaskId } = useUiStore();
@@ -239,6 +240,9 @@ export default function TaskDetail() {
             }}
           />
         </div>
+
+        {/* Dependencies */}
+        <DependencySection task={task} onChanged={loadTask} />
 
         {/* Checklist */}
         <ChecklistEditor taskId={task.id} />
