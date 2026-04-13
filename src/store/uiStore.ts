@@ -1,5 +1,7 @@
 import { create } from 'zustand';
 
+export type ProjectViewMode = 'list' | 'graph';
+
 export type SidebarView =
   | 'inbox'
   | 'today'
@@ -21,6 +23,8 @@ interface UiState {
   linkMode: boolean;
   /** The first task selected in link mode (the "from" / blocker task) */
   linkModeFirstTaskId: string | null;
+  /** Toggle between list and graph view in project views */
+  projectViewMode: ProjectViewMode;
 
   setSidebarView: (view: SidebarView) => void;
   setSelectedTaskId: (id: string | null) => void;
@@ -30,6 +34,7 @@ interface UiState {
   enterLinkMode: () => void;
   exitLinkMode: () => void;
   setLinkModeFirstTask: (id: string | null) => void;
+  setProjectViewMode: (mode: ProjectViewMode) => void;
 }
 
 export const useUiStore = create<UiState>((set) => ({
@@ -39,6 +44,7 @@ export const useUiStore = create<UiState>((set) => ({
   mobileSidebarOpen: false,
   linkMode: false,
   linkModeFirstTaskId: null,
+  projectViewMode: 'list',
 
   setSidebarView: (view) => set({ sidebarView: view, selectedTaskId: null }),
   setSelectedTaskId: (id) => set({ selectedTaskId: id }),
@@ -48,4 +54,5 @@ export const useUiStore = create<UiState>((set) => ({
   enterLinkMode: () => set({ linkMode: true, linkModeFirstTaskId: null }),
   exitLinkMode: () => set({ linkMode: false, linkModeFirstTaskId: null }),
   setLinkModeFirstTask: (id) => set({ linkModeFirstTaskId: id }),
+  setProjectViewMode: (mode) => set({ projectViewMode: mode }),
 }));

@@ -6,6 +6,7 @@ import { getDependencyEdges } from '../../db/operations';
 import type { DependencyEdge, Task } from '../../types';
 import TaskRow from './TaskRow';
 import LinkModeToolbar from '../dependencies/LinkModeToolbar';
+import GraphView from '../projects/GraphView';
 
 function viewTitle(
   view: SidebarView,
@@ -46,7 +47,7 @@ function emptyMessage(view: SidebarView): string {
 }
 
 export default function TaskList() {
-  const { sidebarView, linkMode, enterLinkMode } = useUiStore();
+  const { sidebarView, linkMode, enterLinkMode, projectViewMode, setProjectViewMode } = useUiStore();
   const { projects, areas, createNewTask } = useTaskStore();
   const tasks = useViewTasks();
 
@@ -180,40 +181,79 @@ export default function TaskList() {
         </div>
       </div>
 
-      {/* Task list */}
-      <div className="flex-1 overflow-y-auto">
-        {tasks.length === 0 ? (
-          <p
-            className="px-4 py-8 text-sm text-center"
-            style={{ color: 'var(--color-text-tertiary)' }}
-            data-testid="empty-message"
+      {/* Segmented control for project views */}
+      {projectId && (
+        <div className="px-4 pb-2">
+          <div
+            className="inline-flex rounded-md overflow-hidden"
+            data-testid="view-mode-toggle"
+            style={{ border: '1px solid var(--color-border-primary)' }}
           >
-            {emptyMessage(sidebarView)}
-          </p>
-        ) : isUpcoming && groupedTasks ? (
-          Array.from(groupedTasks.entries()).map(([date, dateTasks]) => (
-            <div key={date}>
-              <div
-                className="px-4 py-1.5 text-xs font-semibold uppercase tracking-wide sticky top-0"
-                style={{
-                  color: 'var(--color-text-tertiary)',
-                  backgroundColor: 'var(--color-surface-primary)',
-                  borderBottom: '1px solid var(--color-border-primary)',
-                }}
-              >
-                {formatGroupDate(date)}
+            <button
+              onClick={() => setProjectViewMode('list')}
+              data-testid="view-mode-list"
+              className="px-3 py-1 text-xs font-medium transition-colors cursor-pointer"
+              style={{
+                backgroundColor: projectViewMode === 'list' ? 'var(--color-accent)' : 'transparent',
+                color: projectViewMode === 'list' ? 'var(--color-text-inverse)' : 'var(--color-text-secondary)',
+              }}
+            >
+              List
+            </button>
+            <button
+              onClick={() => setProjectViewMode('graph')}
+              data-testid="view-mode-graph"
+              className="px-3 py-1 text-xs font-medium transition-colors cursor-pointer"
+              style={{
+                backgroundColor: projectViewMode === 'graph' ? 'var(--color-accent)' : 'transparent',
+                color: projectViewMode === 'graph' ? 'var(--color-text-inverse)' : 'var(--color-text-secondary)',
+                borderLeft: '1px solid var(--color-border-primary)',
+              }}
+            >
+              Graph
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Content: graph view or task list */}
+      {projectId && projectViewMode === 'graph' ? (
+        <GraphView tasks={tasks} edges={edges} />
+      ) : (
+        <div className="flex-1 overflow-y-auto">
+          {tasks.length === 0 ? (
+            <p
+              className="px-4 py-8 text-sm text-center"
+              style={{ color: 'var(--color-text-tertiary)' }}
+              data-testid="empty-message"
+            >
+              {emptyMessage(sidebarView)}
+            </p>
+          ) : isUpcoming && groupedTasks ? (
+            Array.from(groupedTasks.entries()).map(([date, dateTasks]) => (
+              <div key={date}>
+                <div
+                  className="px-4 py-1.5 text-xs font-semibold uppercase tracking-wide sticky top-0"
+                  style={{
+                    color: 'var(--color-text-tertiary)',
+                    backgroundColor: 'var(--color-surface-primary)',
+                    borderBottom: '1px solid var(--color-border-primary)',
+                  }}
+                >
+                  {formatGroupDate(date)}
+                </div>
+                {dateTasks.map((task) => (
+                  <TaskRow key={task.id} task={task} blockedByCount={blockedCounts.get(task.id) ?? 0} />
+                ))}
               </div>
-              {dateTasks.map((task) => (
-                <TaskRow key={task.id} task={task} blockedByCount={blockedCounts.get(task.id) ?? 0} />
-              ))}
-            </div>
-          ))
-        ) : (
-          tasks.map((task) => (
-            <TaskRow key={task.id} task={task} blockedByCount={blockedCounts.get(task.id) ?? 0} />
-          ))
-        )}
-      </div>
+            ))
+          ) : (
+            tasks.map((task) => (
+              <TaskRow key={task.id} task={task} blockedByCount={blockedCounts.get(task.id) ?? 0} />
+            ))
+          )}
+        </div>
+      )}
     </div>
   );
 }
