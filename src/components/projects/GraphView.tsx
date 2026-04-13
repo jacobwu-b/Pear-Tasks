@@ -121,7 +121,6 @@ function edgePath(points: { x: number; y: number }[]): string {
   if (rest.length === 1) {
     d += ` L ${rest[0].x} ${rest[0].y}`;
   } else if (rest.length >= 2) {
-    // Use cubic bezier through intermediate points
     for (let i = 0; i < rest.length - 1; i++) {
       const curr = rest[i];
       const next = rest[i + 1];
@@ -141,113 +140,140 @@ function truncateTitle(title: string, maxLen: number): string {
 }
 
 export default function GraphView({ tasks, edges }: GraphViewProps) {
-  const { selectedTaskId, setSelectedTaskId } = useUiStore();
+  const { selectedTaskId, setSelectedTaskId, graphCollapsed, setGraphCollapsed } = useUiStore();
 
   const layout = useMemo(() => computeLayout(tasks, edges), [tasks, edges]);
 
-  if (tasks.length === 0) {
-    return (
-      <div
-        className="flex-1 flex items-center justify-center"
-        style={{ color: 'var(--color-text-tertiary)' }}
-        data-testid="graph-empty"
-      >
-        <p className="text-sm">No tasks to visualize.</p>
-      </div>
-    );
-  }
+  // Don't render if there are no edges (no dependency graph to show)
+  if (edges.length === 0) return null;
 
   return (
     <div
-      className="flex-1 overflow-auto"
       data-testid="graph-view"
-      style={{ backgroundColor: 'var(--color-surface-secondary)' }}
+      style={{ borderBottom: '1px solid var(--color-border-primary)' }}
     >
-      <svg
-        width={layout.width}
-        height={layout.height}
-        data-testid="graph-svg"
-        style={{ minWidth: '100%', minHeight: '100%' }}
+      {/* Collapsible header */}
+      <button
+        onClick={() => setGraphCollapsed(!graphCollapsed)}
+        data-testid="graph-toggle"
+        className="flex items-center gap-1.5 w-full px-4 py-2 text-xs font-semibold uppercase tracking-wide cursor-pointer transition-colors"
+        style={{
+          color: 'var(--color-text-tertiary)',
+          backgroundColor: 'var(--color-surface-secondary)',
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.backgroundColor = 'var(--color-surface-hover)';
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.backgroundColor = 'var(--color-surface-secondary)';
+        }}
       >
-        {/* Arrow marker */}
-        <defs>
-          <marker
-            id="arrowhead"
-            markerWidth={ARROW_SIZE}
-            markerHeight={ARROW_SIZE}
-            refX={ARROW_SIZE}
-            refY={ARROW_SIZE / 2}
-            orient="auto"
+        <svg
+          viewBox="0 0 16 16"
+          fill="currentColor"
+          className="w-3 h-3 transition-transform"
+          style={{ transform: graphCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)' }}
+        >
+          <path d="M4.646 5.646a.5.5 0 01.708 0L8 8.293l2.646-2.647a.5.5 0 01.708.708l-3 3a.5.5 0 01-.708 0l-3-3a.5.5 0 010-.708z" />
+        </svg>
+        Dependency Graph
+      </button>
+
+      {/* Graph canvas */}
+      {!graphCollapsed && (
+        <div
+          className="overflow-auto"
+          data-testid="graph-canvas"
+          style={{
+            backgroundColor: 'var(--color-surface-secondary)',
+            maxHeight: '280px',
+          }}
+        >
+          <svg
+            width={layout.width}
+            height={layout.height}
+            data-testid="graph-svg"
           >
-            <polygon
-              points={`0 0, ${ARROW_SIZE} ${ARROW_SIZE / 2}, 0 ${ARROW_SIZE}`}
-              fill="var(--color-text-tertiary)"
-            />
-          </marker>
-        </defs>
-
-        {/* Edges */}
-        {layout.edges.map((edge) => (
-          <path
-            key={edge.id}
-            d={edgePath(edge.points)}
-            fill="none"
-            stroke="var(--color-text-tertiary)"
-            strokeWidth={1.5}
-            markerEnd="url(#arrowhead)"
-            data-testid={`graph-edge-${edge.id}`}
-          />
-        ))}
-
-        {/* Nodes */}
-        {layout.nodes.map(({ task, x, y, isBlocked }) => {
-          const isSelected = selectedTaskId === task.id;
-          const halfW = NODE_WIDTH / 2;
-          const halfH = NODE_HEIGHT / 2;
-
-          return (
-            <g
-              key={task.id}
-              data-testid={`graph-node-${task.id}`}
-              onClick={() => setSelectedTaskId(task.id)}
-              style={{ cursor: 'pointer' }}
-            >
-              <rect
-                x={x - halfW}
-                y={y - halfH}
-                width={NODE_WIDTH}
-                height={NODE_HEIGHT}
-                rx={NODE_RX}
-                fill={nodeFill(task, isBlocked)}
-                stroke={isSelected ? 'var(--color-accent)' : nodeStroke(task, isBlocked)}
-                strokeWidth={isSelected ? 2.5 : 1.5}
-              />
-              {/* Status icon for completed tasks */}
-              {task.status === 'completed' && (
-                <text
-                  x={x - halfW + 12}
-                  y={y + 5}
-                  fontSize={14}
-                  fill="#ffffff"
-                  textAnchor="start"
-                >
-                  ✓
-                </text>
-              )}
-              <text
-                x={task.status === 'completed' ? x - halfW + 28 : x - halfW + 12}
-                y={y + 5}
-                fontSize={13}
-                fill={nodeTextColor(task, isBlocked)}
-                textAnchor="start"
-                style={{ fontFamily: 'var(--font-sans)', pointerEvents: 'none' }}
+            {/* Arrow marker */}
+            <defs>
+              <marker
+                id="arrowhead"
+                markerWidth={ARROW_SIZE}
+                markerHeight={ARROW_SIZE}
+                refX={ARROW_SIZE}
+                refY={ARROW_SIZE / 2}
+                orient="auto"
               >
-                {truncateTitle(task.title, task.status === 'completed' ? 18 : 20)}
-              </text>
-            </g>
-          );
-        })}
-      </svg>
+                <polygon
+                  points={`0 0, ${ARROW_SIZE} ${ARROW_SIZE / 2}, 0 ${ARROW_SIZE}`}
+                  fill="var(--color-text-tertiary)"
+                />
+              </marker>
+            </defs>
+
+            {/* Edges */}
+            {layout.edges.map((edge) => (
+              <path
+                key={edge.id}
+                d={edgePath(edge.points)}
+                fill="none"
+                stroke="var(--color-text-tertiary)"
+                strokeWidth={1.5}
+                markerEnd="url(#arrowhead)"
+                data-testid={`graph-edge-${edge.id}`}
+              />
+            ))}
+
+            {/* Nodes */}
+            {layout.nodes.map(({ task, x, y, isBlocked }) => {
+              const isSelected = selectedTaskId === task.id;
+              const halfW = NODE_WIDTH / 2;
+              const halfH = NODE_HEIGHT / 2;
+
+              return (
+                <g
+                  key={task.id}
+                  data-testid={`graph-node-${task.id}`}
+                  onClick={() => setSelectedTaskId(task.id)}
+                  style={{ cursor: 'pointer' }}
+                >
+                  <rect
+                    x={x - halfW}
+                    y={y - halfH}
+                    width={NODE_WIDTH}
+                    height={NODE_HEIGHT}
+                    rx={NODE_RX}
+                    fill={nodeFill(task, isBlocked)}
+                    stroke={isSelected ? 'var(--color-accent)' : nodeStroke(task, isBlocked)}
+                    strokeWidth={isSelected ? 2.5 : 1.5}
+                  />
+                  {task.status === 'completed' && (
+                    <text
+                      x={x - halfW + 12}
+                      y={y + 5}
+                      fontSize={14}
+                      fill="#ffffff"
+                      textAnchor="start"
+                    >
+                      ✓
+                    </text>
+                  )}
+                  <text
+                    x={task.status === 'completed' ? x - halfW + 28 : x - halfW + 12}
+                    y={y + 5}
+                    fontSize={13}
+                    fill={nodeTextColor(task, isBlocked)}
+                    textAnchor="start"
+                    style={{ fontFamily: 'var(--font-sans)', pointerEvents: 'none' }}
+                  >
+                    {truncateTitle(task.title, task.status === 'completed' ? 18 : 20)}
+                  </text>
+                </g>
+              );
+            })}
+          </svg>
+        </div>
+      )}
     </div>
   );
 }
