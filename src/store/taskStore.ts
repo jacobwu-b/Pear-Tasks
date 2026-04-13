@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Area, Project, Task, ChecklistItem } from '../types';
+import type { Area, Project, Task, ChecklistItem, DependencyEdge } from '../types';
 import type { SidebarView } from './uiStore';
 import {
   getAreas,
@@ -21,6 +21,9 @@ import {
   addChecklistItem as dbAddChecklistItem,
   updateChecklistItem as dbUpdateChecklistItem,
   deleteChecklistItem as dbDeleteChecklistItem,
+  addDependency as dbAddDependency,
+  removeDependencyByTasks as dbRemoveDependencyByTasks,
+  getTaskDependencies as dbGetTaskDependencies,
 } from '../db/operations';
 
 interface TaskState {
@@ -50,6 +53,11 @@ interface TaskState {
   toggleChecklistItem: (id: string, completed: boolean) => Promise<void>;
   updateChecklistItemTitle: (id: string, title: string) => Promise<void>;
   deleteChecklistItem: (id: string) => Promise<void>;
+
+  // Dependencies
+  addDependency: (fromTaskId: string, toTaskId: string, projectId: string) => Promise<{ error: string | null }>;
+  removeDependency: (fromTaskId: string, toTaskId: string) => Promise<void>;
+  getTaskDeps: (taskId: string) => Promise<DependencyEdge[]>;
 }
 
 async function fetchTasksForView(view: SidebarView): Promise<Task[]> {
@@ -147,5 +155,21 @@ export const useTaskStore = create<TaskState>((set, get) => ({
 
   deleteChecklistItem: async (id) => {
     await dbDeleteChecklistItem(id);
+  },
+
+  addDependency: async (fromTaskId, toTaskId, projectId) => {
+    const result = await dbAddDependency(fromTaskId, toTaskId, projectId);
+    if (result.error) return { error: result.error };
+    await get().refreshTasks();
+    return { error: null };
+  },
+
+  removeDependency: async (fromTaskId, toTaskId) => {
+    await dbRemoveDependencyByTasks(fromTaskId, toTaskId);
+    await get().refreshTasks();
+  },
+
+  getTaskDeps: async (taskId) => {
+    return dbGetTaskDependencies(taskId);
   },
 }));
