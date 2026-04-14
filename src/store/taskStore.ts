@@ -5,6 +5,8 @@ import {
   getTemplates as dbGetTemplates,
   instantiateTemplate as dbInstantiateTemplate,
   saveAsTemplate as dbSaveAsTemplate,
+  updateTemplate as dbUpdateTemplate,
+  deleteTemplate as dbDeleteTemplate,
 } from '../db/templates';
 import {
   getAreas,
@@ -68,6 +70,8 @@ interface TaskState {
   loadTemplates: () => Promise<ProjectTemplate[]>;
   instantiateTemplate: (templateId: string, projectName: string, areaId: string | null) => Promise<{ projectId: string | null; error: string | null }>;
   saveProjectAsTemplate: (projectId: string, name: string) => Promise<{ error: string | null }>;
+  updateTemplate: (id: string, changes: { name: string }) => Promise<{ error: string | null }>;
+  deleteTemplate: (id: string) => Promise<{ error: string | null }>;
 }
 
 async function fetchTasksForView(view: SidebarView): Promise<Task[]> {
@@ -196,6 +200,18 @@ export const useTaskStore = create<TaskState>((set, get) => ({
 
   saveProjectAsTemplate: async (projectId, name) => {
     const result = await dbSaveAsTemplate(projectId, name);
+    if (result.error) return { error: result.error };
+    return { error: null };
+  },
+
+  updateTemplate: async (id, changes) => {
+    const result = await dbUpdateTemplate(id, changes);
+    if (result.error) return { error: result.error };
+    return { error: null };
+  },
+
+  deleteTemplate: async (id) => {
+    const result = await dbDeleteTemplate(id);
     if (result.error) return { error: result.error };
     return { error: null };
   },

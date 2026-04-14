@@ -9,7 +9,7 @@ interface TemplatePickerProps {
 }
 
 export default function TemplatePicker({ onClose }: TemplatePickerProps) {
-  const { areas, loadSidebarData, instantiateTemplate, loadTemplates } = useTaskStore();
+  const { areas, loadSidebarData, instantiateTemplate, loadTemplates, updateTemplate, deleteTemplate } = useTaskStore();
   const { setSidebarView } = useUiStore();
   const [templates, setTemplates] = useState<ProjectTemplate[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
@@ -17,7 +17,10 @@ export default function TemplatePicker({ onClose }: TemplatePickerProps) {
   const [areaId, setAreaId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState('');
   const nameRef = useRef<HTMLInputElement>(null);
+  const editRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     loadTemplates().then(setTemplates);
@@ -27,7 +30,42 @@ export default function TemplatePicker({ onClose }: TemplatePickerProps) {
     nameRef.current?.focus();
   }, [selectedTemplate]);
 
+  useEffect(() => {
+    if (editingTemplateId) editRef.current?.focus();
+  }, [editingTemplateId]);
+
   const selected = templates.find((t) => t.id === selectedTemplate);
+
+  const reloadTemplates = async () => {
+    const updated = await loadTemplates();
+    setTemplates(updated);
+  };
+
+  const handleStartRename = (t: ProjectTemplate) => {
+    setEditingTemplateId(t.id);
+    setEditingName(t.name);
+  };
+
+  const handleFinishRename = async () => {
+    if (!editingTemplateId) return;
+    if (!editingName.trim()) {
+      setEditingTemplateId(null);
+      return;
+    }
+    await updateTemplate(editingTemplateId, { name: editingName.trim() });
+    setEditingTemplateId(null);
+    await reloadTemplates();
+  };
+
+  const handleDeleteTemplate = async (id: string) => {
+    const result = await deleteTemplate(id);
+    if (result.error) {
+      setError(result.error);
+      return;
+    }
+    if (selectedTemplate === id) setSelectedTemplate(null);
+    await reloadTemplates();
+  };
 
   const handleCreate = async () => {
     if (!projectName.trim()) {
@@ -187,34 +225,96 @@ export default function TemplatePicker({ onClose }: TemplatePickerProps) {
 
               {/* Template options */}
               {templates.map((t) => (
-                <button
+                <div
                   key={t.id}
-                  onClick={() => setSelectedTemplate(t.id)}
-                  data-testid={`template-option-${t.id}`}
-                  className="flex items-center gap-3 w-full px-3 py-2 rounded-md text-sm text-left cursor-pointer transition-colors"
-                  style={{
-                    backgroundColor: selectedTemplate === t.id ? 'var(--color-accent-subtle)' : 'transparent',
-                    color: 'var(--color-text-primary)',
-                    border: selectedTemplate === t.id ? '1px solid var(--color-accent)' : '1px solid transparent',
-                  }}
+                  className="flex items-center gap-1"
                 >
-                  <span
-                    className="shrink-0 w-8 h-8 rounded-md flex items-center justify-center"
-                    style={{
-                      backgroundColor: t.builtIn ? 'var(--color-accent-subtle)' : 'var(--color-surface-tertiary)',
-                      color: t.builtIn ? 'var(--color-accent)' : 'var(--color-text-secondary)',
-                      fontSize: '14px',
-                    }}
-                  >
-                    {t.builtIn ? '📋' : '✨'}
-                  </span>
-                  <div>
-                    <div className="font-medium">{t.name}</div>
-                    <div className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
-                      {t.tasks.length} tasks · {t.edges.length} {t.edges.length === 1 ? 'dependency' : 'dependencies'}
+                  {editingTemplateId === t.id ? (
+                    <div
+                      className="flex items-center gap-2 w-full px-3 py-2 rounded-md"
+                      data-testid={`template-rename-${t.id}`}
+                      style={{
+                        backgroundColor: 'var(--color-surface-secondary)',
+                        border: '1px solid var(--color-accent)',
+                      }}
+                    >
+                      <input
+                        ref={editRef}
+                        type="text"
+                        value={editingName}
+                        onChange={(e) => setEditingName(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') handleFinishRename();
+                          if (e.key === 'Escape') setEditingTemplateId(null);
+                        }}
+                        onBlur={handleFinishRename}
+                        data-testid={`template-rename-input-${t.id}`}
+                        className="flex-1 text-sm bg-transparent outline-none"
+                        style={{ color: 'var(--color-text-primary)' }}
+                      />
                     </div>
-                  </div>
-                </button>
+                  ) : (
+                    <button
+                      onClick={() => setSelectedTemplate(t.id)}
+                      data-testid={`template-option-${t.id}`}
+                      className="flex items-center gap-3 flex-1 min-w-0 px-3 py-2 rounded-md text-sm text-left cursor-pointer transition-colors"
+                      style={{
+                        backgroundColor: selectedTemplate === t.id ? 'var(--color-accent-subtle)' : 'transparent',
+                        color: 'var(--color-text-primary)',
+                        border: selectedTemplate === t.id ? '1px solid var(--color-accent)' : '1px solid transparent',
+                      }}
+                    >
+                      <span
+                        className="shrink-0 w-8 h-8 rounded-md flex items-center justify-center"
+                        style={{
+                          backgroundColor: t.builtIn ? 'var(--color-accent-subtle)' : 'var(--color-surface-tertiary)',
+                          color: t.builtIn ? 'var(--color-accent)' : 'var(--color-text-secondary)',
+                          fontSize: '14px',
+                        }}
+                      >
+                        {t.builtIn ? '📋' : '✨'}
+                      </span>
+                      <div className="min-w-0">
+                        <div className="font-medium truncate">{t.name}</div>
+                        <div className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
+                          {t.tasks.length} tasks · {t.edges.length} {t.edges.length === 1 ? 'dependency' : 'dependencies'}
+                        </div>
+                      </div>
+                    </button>
+                  )}
+
+                  {/* Edit/delete controls for custom templates */}
+                  {!t.builtIn && editingTemplateId !== t.id && (
+                    <div className="flex shrink-0">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleStartRename(t); }}
+                        data-testid={`template-rename-btn-${t.id}`}
+                        className="p-1 rounded cursor-pointer transition-colors"
+                        style={{ color: 'var(--color-text-tertiary)' }}
+                        onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--color-text-primary)'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--color-text-tertiary)'; }}
+                        title="Rename template"
+                      >
+                        <svg viewBox="0 0 16 16" fill="currentColor" className="w-3.5 h-3.5">
+                          <path d="M11.013 1.427a1.75 1.75 0 012.474 0l1.086 1.086a1.75 1.75 0 010 2.474l-8.61 8.61c-.21.21-.47.364-.756.445l-3.251.93a.75.75 0 01-.927-.928l.929-3.25c.081-.286.235-.547.445-.758l8.61-8.61zm1.414 1.06a.25.25 0 00-.354 0L3.462 11.098a.25.25 0 00-.064.108l-.631 2.208 2.208-.63a.25.25 0 00.108-.064l8.61-8.61a.25.25 0 000-.354l-1.086-1.086z" />
+                        </svg>
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleDeleteTemplate(t.id); }}
+                        data-testid={`template-delete-btn-${t.id}`}
+                        className="p-1 rounded cursor-pointer transition-colors"
+                        style={{ color: 'var(--color-text-tertiary)' }}
+                        onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--color-status-overdue)'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--color-text-tertiary)'; }}
+                        title="Delete template"
+                      >
+                        <svg viewBox="0 0 16 16" fill="currentColor" className="w-3.5 h-3.5">
+                          <path fillRule="evenodd" d="M6.5 1.75a.25.25 0 01.25-.25h2.5a.25.25 0 01.25.25V3h-3V1.75zm4.5 0V3h2.25a.75.75 0 010 1.5H2.75a.75.75 0 010-1.5H5V1.75A1.75 1.75 0 016.75 0h2.5C10.216 0 11 .784 11 1.75zM4.496 6.675a.75.75 0 10-1.492.15l.66 6.6A1.75 1.75 0 005.405 15h5.19a1.75 1.75 0 001.741-1.575l.66-6.6a.75.75 0 00-1.492-.15l-.66 6.6a.25.25 0 01-.249.225h-5.19a.25.25 0 01-.249-.225l-.66-6.6z" clipRule="evenodd" />
+                        </svg>
+                      </button>
+                    </div>
+                  )}
+                </div>
               ))}
             </div>
           </div>

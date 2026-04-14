@@ -5,6 +5,7 @@ import {
   getTemplates,
   getTemplate,
   deleteTemplate,
+  updateTemplate,
   instantiateTemplate,
   saveAsTemplate,
 } from '../../src/db/templates';
@@ -84,6 +85,47 @@ describe('deleteTemplate', () => {
 
   it('returns error for non-existent template', async () => {
     const result = await deleteTemplate('non-existent');
+    expect(result.error).toBe('Template not found');
+  });
+});
+
+// ── Update ────────────────────────────────────────────────────────
+
+describe('updateTemplate', () => {
+  it('renames a custom template', async () => {
+    const proj = await createProject('Source', null);
+    await createTask('Task 1', { projectId: proj.data!.id });
+    const saved = await saveAsTemplate(proj.data!.id, 'Original Name');
+    const templateId = saved.data!.id;
+
+    const result = await updateTemplate(templateId, { name: 'Renamed Template' });
+    expect(result.error).toBeNull();
+    expect(result.data!.name).toBe('Renamed Template');
+
+    const retrieved = await getTemplate(templateId);
+    expect(retrieved!.name).toBe('Renamed Template');
+  });
+
+  it('rejects renaming a built-in template', async () => {
+    await seedBuiltInTemplates();
+    const result = await updateTemplate('builtin-software-project', { name: 'Hacked Name' });
+    expect(result.error).toBe('Cannot modify built-in templates');
+
+    const t = await getTemplate('builtin-software-project');
+    expect(t!.name).toBe('Software Project');
+  });
+
+  it('rejects empty name', async () => {
+    const proj = await createProject('Source', null);
+    await createTask('Task 1', { projectId: proj.data!.id });
+    const saved = await saveAsTemplate(proj.data!.id, 'My Template');
+
+    const result = await updateTemplate(saved.data!.id, { name: '   ' });
+    expect(result.error).toBe('Template name is required');
+  });
+
+  it('returns error for non-existent template', async () => {
+    const result = await updateTemplate('non-existent', { name: 'Whatever' });
     expect(result.error).toBe('Template not found');
   });
 });

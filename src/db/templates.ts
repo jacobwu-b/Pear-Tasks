@@ -122,6 +122,20 @@ export async function getTemplate(id: string): Promise<ProjectTemplate | undefin
   return db.templates.get(id);
 }
 
+export async function updateTemplate(
+  id: string,
+  changes: Partial<Pick<ProjectTemplate, 'name'>>
+): Promise<Result<ProjectTemplate>> {
+  const template = await db.templates.get(id);
+  if (!template) return err('Template not found');
+  if (template.builtIn) return err('Cannot modify built-in templates');
+  if (changes.name !== undefined && !changes.name.trim()) return err('Template name is required');
+
+  await db.templates.update(id, changes);
+  const updated = await db.templates.get(id);
+  return ok(updated!);
+}
+
 export async function deleteTemplate(id: string): Promise<Result<void>> {
   const template = await db.templates.get(id);
   if (!template) return err('Template not found');

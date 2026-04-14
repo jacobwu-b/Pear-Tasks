@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, act, cleanup } from '@testing-library/react';
-import { createProject, createTask, addDependency, addChecklistItem } from '../../src/db/operations';
+import { createProject, createTask } from '../../src/db/operations';
+import { saveAsTemplate, getTemplates, getTemplate } from '../../src/db/templates';
 import { seedBuiltInTemplates } from '../../src/db/templates';
 import { useUiStore } from '../../src/store/uiStore';
 import { useTaskStore } from '../../src/store/taskStore';
@@ -184,6 +185,100 @@ describe('TemplatePicker', () => {
     });
 
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it('shows rename and delete buttons for custom templates but not built-in', async () => {
+    await seedBuiltInTemplates();
+    // Create a custom template
+    const proj = await createProject('Custom', null);
+    await createTask('T1', { projectId: proj.data!.id });
+    const saved = await saveAsTemplate(proj.data!.id, 'My Custom');
+    const customId = saved.data!.id;
+
+    const onClose = vi.fn();
+    await act(async () => {
+      render(<TemplatePicker onClose={onClose} />);
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+
+    // Custom template should have rename and delete buttons
+    expect(screen.getByTestId(`template-rename-btn-${customId}`)).toBeDefined();
+    expect(screen.getByTestId(`template-delete-btn-${customId}`)).toBeDefined();
+
+    // Built-in templates should NOT have these buttons
+    expect(screen.queryByTestId('template-rename-btn-builtin-software-project')).toBeNull();
+    expect(screen.queryByTestId('template-delete-btn-builtin-software-project')).toBeNull();
+  });
+
+  it('renames a custom template inline', async () => {
+    const proj = await createProject('Source', null);
+    await createTask('T1', { projectId: proj.data!.id });
+    const saved = await saveAsTemplate(proj.data!.id, 'Old Name');
+    const customId = saved.data!.id;
+
+    const onClose = vi.fn();
+    await act(async () => {
+      render(<TemplatePicker onClose={onClose} />);
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+
+    // Click rename button
+    await act(async () => {
+      fireEvent.click(screen.getByTestId(`template-rename-btn-${customId}`));
+    });
+
+    // Should show rename input
+    const input = screen.getByTestId(`template-rename-input-${customId}`) as HTMLInputElement;
+    expect(input.value).toBe('Old Name');
+
+    // Type new name and press Enter
+    await act(async () => {
+      fireEvent.change(input, { target: { value: 'New Name' } });
+      fireEvent.keyDown(input, { key: 'Enter' });
+      await new Promise((r) => setTimeout(r, 50));
+    });
+
+    // Verify the template was renamed in the DB
+    const updated = await getTemplate(customId);
+    expect(updated!.name).toBe('New Name');
+
+    // Verify the UI updated
+    expect(screen.getByText('New Name')).toBeDefined();
+  });
+
+  it('deletes a custom template from the picker', async () => {
+    const proj = await createProject('Source', null);
+    await createTask('T1', { projectId: proj.data!.id });
+    const saved = await saveAsTemplate(proj.data!.id, 'Doomed Template');
+    const customId = saved.data!.id;
+
+    const onClose = vi.fn();
+    await act(async () => {
+      render(<TemplatePicker onClose={onClose} />);
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+
+    // Verify template is shown
+    expect(screen.getByText('Doomed Template')).toBeDefined();
+
+    // Click delete
+    await act(async () => {
+      fireEvent.click(screen.getByTestId(`template-delete-btn-${customId}`));
+      await new Promise((r) => setTimeout(r, 50));
+    });
+
+    // Verify it's gone from the DB
+    const deleted = await getTemplate(customId);
+    expect(deleted).toBeUndefined();
+
+    // Verify it's gone from the UI
+    expect(screen.queryByText('Doomed Template')).toBeNull();
   });
 });
 
