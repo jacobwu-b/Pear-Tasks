@@ -128,6 +128,109 @@ describe('updateTemplate', () => {
     const result = await updateTemplate('non-existent', { name: 'Whatever' });
     expect(result.error).toBe('Template not found');
   });
+
+  it('updates tasks on a custom template', async () => {
+    const proj = await createProject('Source', null);
+    await createTask('Original Task', { projectId: proj.data!.id });
+    const saved = await saveAsTemplate(proj.data!.id, 'My Template');
+
+    const newTasks = [
+      { tempId: 'a', title: 'Alpha', checklistTitles: ['Step 1'] },
+      { tempId: 'b', title: 'Beta', checklistTitles: [] },
+    ];
+    const result = await updateTemplate(saved.data!.id, { tasks: newTasks });
+    expect(result.error).toBeNull();
+    expect(result.data!.tasks.length).toBe(2);
+    expect(result.data!.tasks[0].title).toBe('Alpha');
+  });
+
+  it('updates edges on a custom template', async () => {
+    const proj = await createProject('Source', null);
+    const t1 = await createTask('T1', { projectId: proj.data!.id });
+    const t2 = await createTask('T2', { projectId: proj.data!.id });
+    await addDependency(t1.data!.id, t2.data!.id, proj.data!.id);
+    const saved = await saveAsTemplate(proj.data!.id, 'My Template');
+
+    // Add a third task and a new edge
+    const newTasks = [
+      ...saved.data!.tasks,
+      { tempId: 'new-1', title: 'T3', checklistTitles: [] },
+    ];
+    const newEdges = [
+      ...saved.data!.edges,
+      { fromTempId: saved.data!.tasks[1].tempId, toTempId: 'new-1' },
+    ];
+    const result = await updateTemplate(saved.data!.id, { tasks: newTasks, edges: newEdges });
+    expect(result.error).toBeNull();
+    expect(result.data!.tasks.length).toBe(3);
+    expect(result.data!.edges.length).toBe(2);
+  });
+
+  it('updates name, tasks, and edges together', async () => {
+    const proj = await createProject('Source', null);
+    await createTask('T1', { projectId: proj.data!.id });
+    const saved = await saveAsTemplate(proj.data!.id, 'Old');
+
+    const result = await updateTemplate(saved.data!.id, {
+      name: 'New',
+      tasks: [
+        { tempId: 'x', title: 'X', checklistTitles: [] },
+        { tempId: 'y', title: 'Y', checklistTitles: ['Check'] },
+      ],
+      edges: [{ fromTempId: 'x', toTempId: 'y' }],
+    });
+    expect(result.error).toBeNull();
+    expect(result.data!.name).toBe('New');
+    expect(result.data!.tasks.length).toBe(2);
+    expect(result.data!.edges.length).toBe(1);
+  });
+
+  it('rejects edges referencing non-existent tempIds', async () => {
+    const proj = await createProject('Source', null);
+    await createTask('T1', { projectId: proj.data!.id });
+    const saved = await saveAsTemplate(proj.data!.id, 'My Template');
+
+    const result = await updateTemplate(saved.data!.id, {
+      edges: [{ fromTempId: 'ghost-1', toTempId: 'ghost-2' }],
+    });
+    expect(result.error).toBe('Edge references a task that does not exist in the template');
+  });
+
+  it('round-trips: update then instantiate produces correct structure', async () => {
+    const proj = await createProject('Source', null);
+    await createTask('T1', { projectId: proj.data!.id });
+    const saved = await saveAsTemplate(proj.data!.id, 'My Template');
+
+    // Update to a completely different structure
+    await updateTemplate(saved.data!.id, {
+      name: 'Updated',
+      tasks: [
+        { tempId: 'a', title: 'Step A', checklistTitles: ['Do thing'] },
+        { tempId: 'b', title: 'Step B', checklistTitles: [] },
+        { tempId: 'c', title: 'Step C', checklistTitles: [] },
+      ],
+      edges: [
+        { fromTempId: 'a', toTempId: 'b' },
+        { fromTempId: 'b', toTempId: 'c' },
+      ],
+    });
+
+    // Instantiate
+    const inst = await instantiateTemplate(saved.data!.id, 'Clone', null);
+    expect(inst.error).toBeNull();
+
+    const tasks = await getTasksByProject(inst.data!.projectId);
+    expect(tasks.length).toBe(3);
+    expect(tasks.map((t) => t.title).sort()).toEqual(['Step A', 'Step B', 'Step C']);
+
+    const edges = await getDependencyEdges(inst.data!.projectId);
+    expect(edges.length).toBe(2);
+
+    const stepA = tasks.find((t) => t.title === 'Step A')!;
+    const checklist = await getChecklistItems(stepA.id);
+    expect(checklist.length).toBe(1);
+    expect(checklist[0].title).toBe('Do thing');
+  });
 });
 
 // ── Instantiate ───────────────────────────────────────────────────

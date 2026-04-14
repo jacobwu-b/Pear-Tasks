@@ -1,8 +1,9 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, act, cleanup } from '@testing-library/react';
-import { createProject, createTask } from '../../src/db/operations';
+import { createProject, createTask, addDependency } from '../../src/db/operations';
 import { saveAsTemplate, getTemplates, getTemplate } from '../../src/db/templates';
+import TemplateEditor from '../../src/components/templates/TemplateEditor';
 import { seedBuiltInTemplates } from '../../src/db/templates';
 import { useUiStore } from '../../src/store/uiStore';
 import { useTaskStore } from '../../src/store/taskStore';
@@ -187,7 +188,7 @@ describe('TemplatePicker', () => {
     expect(onClose).toHaveBeenCalled();
   });
 
-  it('shows rename and delete buttons for custom templates but not built-in', async () => {
+  it('shows edit and delete buttons for custom templates but not built-in', async () => {
     await seedBuiltInTemplates();
     // Create a custom template
     const proj = await createProject('Custom', null);
@@ -203,19 +204,19 @@ describe('TemplatePicker', () => {
       await new Promise((r) => setTimeout(r, 50));
     });
 
-    // Custom template should have rename and delete buttons
-    expect(screen.getByTestId(`template-rename-btn-${customId}`)).toBeDefined();
+    // Custom template should have edit and delete buttons
+    expect(screen.getByTestId(`template-edit-btn-${customId}`)).toBeDefined();
     expect(screen.getByTestId(`template-delete-btn-${customId}`)).toBeDefined();
 
     // Built-in templates should NOT have these buttons
-    expect(screen.queryByTestId('template-rename-btn-builtin-software-project')).toBeNull();
+    expect(screen.queryByTestId('template-edit-btn-builtin-software-project')).toBeNull();
     expect(screen.queryByTestId('template-delete-btn-builtin-software-project')).toBeNull();
   });
 
-  it('renames a custom template inline', async () => {
+  it('opens template editor when edit button is clicked', async () => {
     const proj = await createProject('Source', null);
     await createTask('T1', { projectId: proj.data!.id });
-    const saved = await saveAsTemplate(proj.data!.id, 'Old Name');
+    const saved = await saveAsTemplate(proj.data!.id, 'Editable');
     const customId = saved.data!.id;
 
     const onClose = vi.fn();
@@ -226,28 +227,15 @@ describe('TemplatePicker', () => {
       await new Promise((r) => setTimeout(r, 50));
     });
 
-    // Click rename button
+    // Click edit button
     await act(async () => {
-      fireEvent.click(screen.getByTestId(`template-rename-btn-${customId}`));
+      fireEvent.click(screen.getByTestId(`template-edit-btn-${customId}`));
     });
 
-    // Should show rename input
-    const input = screen.getByTestId(`template-rename-input-${customId}`) as HTMLInputElement;
-    expect(input.value).toBe('Old Name');
-
-    // Type new name and press Enter
-    await act(async () => {
-      fireEvent.change(input, { target: { value: 'New Name' } });
-      fireEvent.keyDown(input, { key: 'Enter' });
-      await new Promise((r) => setTimeout(r, 50));
-    });
-
-    // Verify the template was renamed in the DB
-    const updated = await getTemplate(customId);
-    expect(updated!.name).toBe('New Name');
-
-    // Verify the UI updated
-    expect(screen.getByText('New Name')).toBeDefined();
+    // Template editor should be open
+    expect(screen.getByTestId('template-editor')).toBeDefined();
+    const nameInput = screen.getByTestId('template-editor-name') as HTMLInputElement;
+    expect(nameInput.value).toBe('Editable');
   });
 
   it('deletes a custom template from the picker', async () => {
@@ -374,5 +362,311 @@ describe('SaveAsTemplateDialog', () => {
     });
 
     expect(onClose).toHaveBeenCalled();
+  });
+});
+
+// ── TemplateEditor ────────────────────────────────────────────────
+
+describe('TemplateEditor', () => {
+  async function createCustomTemplate(taskCount = 2, withEdge = false) {
+    const proj = await createProject('Source', null);
+    const pid = proj.data!.id;
+    const taskIds: string[] = [];
+    for (let i = 0; i < taskCount; i++) {
+      const t = await createTask(`Task ${i + 1}`, { projectId: pid });
+      taskIds.push(t.data!.id);
+    }
+    if (withEdge && taskIds.length >= 2) {
+      await addDependency(taskIds[0], taskIds[1], pid);
+    }
+    const saved = await saveAsTemplate(pid, 'My Template');
+    return saved.data!;
+  }
+
+  it('renders with the template data pre-loaded', async () => {
+    const template = await createCustomTemplate(2, true);
+    const onClose = vi.fn();
+    const onSaved = vi.fn();
+
+    await act(async () => {
+      render(<TemplateEditor template={template} onClose={onClose} onSaved={onSaved} />);
+    });
+
+    expect(screen.getByTestId('template-editor')).toBeDefined();
+    const nameInput = screen.getByTestId('template-editor-name') as HTMLInputElement;
+    expect(nameInput.value).toBe('My Template');
+
+    // Should show 2 tasks
+    expect(screen.getByText('Tasks (2)')).toBeDefined();
+    // Should show 1 dependency
+    expect(screen.getByText('Dependencies (1)')).toBeDefined();
+  });
+
+  it('renames a template via the editor', async () => {
+    const template = await createCustomTemplate();
+    const onClose = vi.fn();
+    const onSaved = vi.fn();
+
+    await act(async () => {
+      render(<TemplateEditor template={template} onClose={onClose} onSaved={onSaved} />);
+    });
+
+    // Change name
+    const nameInput = screen.getByTestId('template-editor-name') as HTMLInputElement;
+    await act(async () => {
+      fireEvent.change(nameInput, { target: { value: 'Renamed Template' } });
+    });
+
+    // Save
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('template-editor-save'));
+      await new Promise((r) => setTimeout(r, 100));
+    });
+
+    // Verify persisted
+    const updated = await getTemplate(template.id);
+    expect(updated!.name).toBe('Renamed Template');
+    expect(onSaved).toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it('adds a new task to the template', async () => {
+    const template = await createCustomTemplate(1);
+    const onClose = vi.fn();
+    const onSaved = vi.fn();
+
+    await act(async () => {
+      render(<TemplateEditor template={template} onClose={onClose} onSaved={onSaved} />);
+    });
+
+    expect(screen.getByText('Tasks (1)')).toBeDefined();
+
+    // Add a task
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('template-editor-add-task'));
+    });
+
+    expect(screen.getByText('Tasks (2)')).toBeDefined();
+
+    // Save
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('template-editor-save'));
+      await new Promise((r) => setTimeout(r, 100));
+    });
+
+    const updated = await getTemplate(template.id);
+    expect(updated!.tasks.length).toBe(2);
+  });
+
+  it('removes a task and its associated edges', async () => {
+    const template = await createCustomTemplate(2, true);
+    const taskToRemove = template.tasks[0];
+    const onClose = vi.fn();
+    const onSaved = vi.fn();
+
+    await act(async () => {
+      render(<TemplateEditor template={template} onClose={onClose} onSaved={onSaved} />);
+    });
+
+    expect(screen.getByText('Tasks (2)')).toBeDefined();
+    expect(screen.getByText('Dependencies (1)')).toBeDefined();
+
+    // Remove first task
+    await act(async () => {
+      fireEvent.click(screen.getByTestId(`template-editor-remove-task-${taskToRemove.tempId}`));
+    });
+
+    expect(screen.getByText('Tasks (1)')).toBeDefined();
+    // Edge should be removed too since it referenced the deleted task
+    expect(screen.getByText('Dependencies (0)')).toBeDefined();
+
+    // Save
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('template-editor-save'));
+      await new Promise((r) => setTimeout(r, 100));
+    });
+
+    const updated = await getTemplate(template.id);
+    expect(updated!.tasks.length).toBe(1);
+    expect(updated!.edges.length).toBe(0);
+  });
+
+  it('edits a task title', async () => {
+    const template = await createCustomTemplate(1);
+    const task = template.tasks[0];
+    const onClose = vi.fn();
+    const onSaved = vi.fn();
+
+    await act(async () => {
+      render(<TemplateEditor template={template} onClose={onClose} onSaved={onSaved} />);
+    });
+
+    const titleInput = screen.getByTestId(`template-editor-task-title-${task.tempId}`) as HTMLInputElement;
+    await act(async () => {
+      fireEvent.change(titleInput, { target: { value: 'Updated Title' } });
+    });
+
+    // Save
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('template-editor-save'));
+      await new Promise((r) => setTimeout(r, 100));
+    });
+
+    const updated = await getTemplate(template.id);
+    expect(updated!.tasks[0].title).toBe('Updated Title');
+  });
+
+  it('adds and removes a dependency edge', async () => {
+    const template = await createCustomTemplate(3, false);
+    const onClose = vi.fn();
+    const onSaved = vi.fn();
+
+    await act(async () => {
+      render(<TemplateEditor template={template} onClose={onClose} onSaved={onSaved} />);
+    });
+
+    expect(screen.getByText('Dependencies (0)')).toBeDefined();
+
+    // Select from and to tasks in the dropdowns
+    const fromSelect = screen.getByTestId('template-editor-dep-from') as HTMLSelectElement;
+    const toSelect = screen.getByTestId('template-editor-dep-to') as HTMLSelectElement;
+
+    await act(async () => {
+      fireEvent.change(fromSelect, { target: { value: template.tasks[0].tempId } });
+    });
+    await act(async () => {
+      fireEvent.change(toSelect, { target: { value: template.tasks[1].tempId } });
+    });
+
+    // Add dependency
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('template-editor-add-dep'));
+    });
+
+    expect(screen.getByText('Dependencies (1)')).toBeDefined();
+
+    // Remove the edge
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('template-editor-remove-edge-0'));
+    });
+
+    expect(screen.getByText('Dependencies (0)')).toBeDefined();
+  });
+
+  it('manages checklist items within a task', async () => {
+    const template = await createCustomTemplate(1);
+    const task = template.tasks[0];
+    const onClose = vi.fn();
+    const onSaved = vi.fn();
+
+    await act(async () => {
+      render(<TemplateEditor template={template} onClose={onClose} onSaved={onSaved} />);
+    });
+
+    // Expand task
+    await act(async () => {
+      fireEvent.click(screen.getByTestId(`template-editor-expand-${task.tempId}`));
+    });
+
+    expect(screen.getByTestId(`template-editor-checklist-${task.tempId}`)).toBeDefined();
+
+    // Add a checklist item
+    await act(async () => {
+      fireEvent.click(screen.getByTestId(`template-editor-add-checklist-${task.tempId}`));
+    });
+
+    // Type into the new checklist item
+    const existingCount = task.checklistTitles.length;
+    const newItemInput = screen.getByTestId(`template-editor-checklist-item-${task.tempId}-${existingCount}`) as HTMLInputElement;
+    await act(async () => {
+      fireEvent.change(newItemInput, { target: { value: 'New Checklist Item' } });
+    });
+
+    // Save
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('template-editor-save'));
+      await new Promise((r) => setTimeout(r, 100));
+    });
+
+    const updated = await getTemplate(template.id);
+    expect(updated!.tasks[0].checklistTitles).toContain('New Checklist Item');
+  });
+
+  it('shows error when saving with empty name', async () => {
+    const template = await createCustomTemplate();
+    const onClose = vi.fn();
+    const onSaved = vi.fn();
+
+    await act(async () => {
+      render(<TemplateEditor template={template} onClose={onClose} onSaved={onSaved} />);
+    });
+
+    // Clear name
+    const nameInput = screen.getByTestId('template-editor-name') as HTMLInputElement;
+    await act(async () => {
+      fireEvent.change(nameInput, { target: { value: '' } });
+    });
+
+    // Try save
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('template-editor-save'));
+    });
+
+    expect(screen.getByTestId('template-editor-error')).toBeDefined();
+    expect(screen.getByText('Template name is required')).toBeDefined();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('shows error when all tasks are removed', async () => {
+    const template = await createCustomTemplate(1);
+    const task = template.tasks[0];
+    const onClose = vi.fn();
+    const onSaved = vi.fn();
+
+    await act(async () => {
+      render(<TemplateEditor template={template} onClose={onClose} onSaved={onSaved} />);
+    });
+
+    // Remove the only task
+    await act(async () => {
+      fireEvent.click(screen.getByTestId(`template-editor-remove-task-${task.tempId}`));
+    });
+
+    // Try save
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('template-editor-save'));
+    });
+
+    expect(screen.getByTestId('template-editor-error')).toBeDefined();
+    expect(screen.getByText('Template must have at least one task')).toBeDefined();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('cancel discards changes', async () => {
+    const template = await createCustomTemplate();
+    const onClose = vi.fn();
+    const onSaved = vi.fn();
+
+    await act(async () => {
+      render(<TemplateEditor template={template} onClose={onClose} onSaved={onSaved} />);
+    });
+
+    // Change name
+    const nameInput = screen.getByTestId('template-editor-name') as HTMLInputElement;
+    await act(async () => {
+      fireEvent.change(nameInput, { target: { value: 'Changed Name' } });
+    });
+
+    // Click close
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('template-editor-close'));
+    });
+
+    expect(onClose).toHaveBeenCalled();
+    expect(onSaved).not.toHaveBeenCalled();
+
+    // Verify DB was NOT changed
+    const unchanged = await getTemplate(template.id);
+    expect(unchanged!.name).toBe('My Template');
   });
 });

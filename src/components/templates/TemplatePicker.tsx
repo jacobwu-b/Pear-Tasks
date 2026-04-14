@@ -3,13 +3,14 @@ import type { ProjectTemplate } from '../../types';
 import { useTaskStore } from '../../store/taskStore';
 import { useUiStore } from '../../store/uiStore';
 import { createProject } from '../../db/operations';
+import TemplateEditor from './TemplateEditor';
 
 interface TemplatePickerProps {
   onClose: () => void;
 }
 
 export default function TemplatePicker({ onClose }: TemplatePickerProps) {
-  const { areas, loadSidebarData, instantiateTemplate, loadTemplates, updateTemplate, deleteTemplate } = useTaskStore();
+  const { areas, loadSidebarData, instantiateTemplate, loadTemplates, deleteTemplate } = useTaskStore();
   const { setSidebarView } = useUiStore();
   const [templates, setTemplates] = useState<ProjectTemplate[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
@@ -17,10 +18,8 @@ export default function TemplatePicker({ onClose }: TemplatePickerProps) {
   const [areaId, setAreaId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
-  const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
-  const [editingName, setEditingName] = useState('');
+  const [editingTemplate, setEditingTemplate] = useState<ProjectTemplate | null>(null);
   const nameRef = useRef<HTMLInputElement>(null);
-  const editRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     loadTemplates().then(setTemplates);
@@ -30,31 +29,11 @@ export default function TemplatePicker({ onClose }: TemplatePickerProps) {
     nameRef.current?.focus();
   }, [selectedTemplate]);
 
-  useEffect(() => {
-    if (editingTemplateId) editRef.current?.focus();
-  }, [editingTemplateId]);
-
   const selected = templates.find((t) => t.id === selectedTemplate);
 
   const reloadTemplates = async () => {
     const updated = await loadTemplates();
     setTemplates(updated);
-  };
-
-  const handleStartRename = (t: ProjectTemplate) => {
-    setEditingTemplateId(t.id);
-    setEditingName(t.name);
-  };
-
-  const handleFinishRename = async () => {
-    if (!editingTemplateId) return;
-    if (!editingName.trim()) {
-      setEditingTemplateId(null);
-      return;
-    }
-    await updateTemplate(editingTemplateId, { name: editingName.trim() });
-    setEditingTemplateId(null);
-    await reloadTemplates();
   };
 
   const handleDeleteTemplate = async (id: string) => {
@@ -229,71 +208,45 @@ export default function TemplatePicker({ onClose }: TemplatePickerProps) {
                   key={t.id}
                   className="flex items-center gap-1"
                 >
-                  {editingTemplateId === t.id ? (
-                    <div
-                      className="flex items-center gap-2 w-full px-3 py-2 rounded-md"
-                      data-testid={`template-rename-${t.id}`}
+                  <button
+                    onClick={() => setSelectedTemplate(t.id)}
+                    data-testid={`template-option-${t.id}`}
+                    className="flex items-center gap-3 flex-1 min-w-0 px-3 py-2 rounded-md text-sm text-left cursor-pointer transition-colors"
+                    style={{
+                      backgroundColor: selectedTemplate === t.id ? 'var(--color-accent-subtle)' : 'transparent',
+                      color: 'var(--color-text-primary)',
+                      border: selectedTemplate === t.id ? '1px solid var(--color-accent)' : '1px solid transparent',
+                    }}
+                  >
+                    <span
+                      className="shrink-0 w-8 h-8 rounded-md flex items-center justify-center"
                       style={{
-                        backgroundColor: 'var(--color-surface-secondary)',
-                        border: '1px solid var(--color-accent)',
+                        backgroundColor: t.builtIn ? 'var(--color-accent-subtle)' : 'var(--color-surface-tertiary)',
+                        color: t.builtIn ? 'var(--color-accent)' : 'var(--color-text-secondary)',
+                        fontSize: '14px',
                       }}
                     >
-                      <input
-                        ref={editRef}
-                        type="text"
-                        value={editingName}
-                        onChange={(e) => setEditingName(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') handleFinishRename();
-                          if (e.key === 'Escape') setEditingTemplateId(null);
-                        }}
-                        onBlur={handleFinishRename}
-                        data-testid={`template-rename-input-${t.id}`}
-                        className="flex-1 text-sm bg-transparent outline-none"
-                        style={{ color: 'var(--color-text-primary)' }}
-                      />
-                    </div>
-                  ) : (
-                    <button
-                      onClick={() => setSelectedTemplate(t.id)}
-                      data-testid={`template-option-${t.id}`}
-                      className="flex items-center gap-3 flex-1 min-w-0 px-3 py-2 rounded-md text-sm text-left cursor-pointer transition-colors"
-                      style={{
-                        backgroundColor: selectedTemplate === t.id ? 'var(--color-accent-subtle)' : 'transparent',
-                        color: 'var(--color-text-primary)',
-                        border: selectedTemplate === t.id ? '1px solid var(--color-accent)' : '1px solid transparent',
-                      }}
-                    >
-                      <span
-                        className="shrink-0 w-8 h-8 rounded-md flex items-center justify-center"
-                        style={{
-                          backgroundColor: t.builtIn ? 'var(--color-accent-subtle)' : 'var(--color-surface-tertiary)',
-                          color: t.builtIn ? 'var(--color-accent)' : 'var(--color-text-secondary)',
-                          fontSize: '14px',
-                        }}
-                      >
-                        {t.builtIn ? '📋' : '✨'}
-                      </span>
-                      <div className="min-w-0">
-                        <div className="font-medium truncate">{t.name}</div>
-                        <div className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
-                          {t.tasks.length} tasks · {t.edges.length} {t.edges.length === 1 ? 'dependency' : 'dependencies'}
-                        </div>
+                      {t.builtIn ? '📋' : '✨'}
+                    </span>
+                    <div className="min-w-0">
+                      <div className="font-medium truncate">{t.name}</div>
+                      <div className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
+                        {t.tasks.length} tasks · {t.edges.length} {t.edges.length === 1 ? 'dependency' : 'dependencies'}
                       </div>
-                    </button>
-                  )}
+                    </div>
+                  </button>
 
                   {/* Edit/delete controls for custom templates */}
-                  {!t.builtIn && editingTemplateId !== t.id && (
+                  {!t.builtIn && (
                     <div className="flex shrink-0">
                       <button
-                        onClick={(e) => { e.stopPropagation(); handleStartRename(t); }}
-                        data-testid={`template-rename-btn-${t.id}`}
+                        onClick={(e) => { e.stopPropagation(); setEditingTemplate(t); }}
+                        data-testid={`template-edit-btn-${t.id}`}
                         className="p-1 rounded cursor-pointer transition-colors"
                         style={{ color: 'var(--color-text-tertiary)' }}
                         onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--color-text-primary)'; }}
                         onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--color-text-tertiary)'; }}
-                        title="Rename template"
+                        title="Edit template"
                       >
                         <svg viewBox="0 0 16 16" fill="currentColor" className="w-3.5 h-3.5">
                           <path d="M11.013 1.427a1.75 1.75 0 012.474 0l1.086 1.086a1.75 1.75 0 010 2.474l-8.61 8.61c-.21.21-.47.364-.756.445l-3.251.93a.75.75 0 01-.927-.928l.929-3.25c.081-.286.235-.547.445-.758l8.61-8.61zm1.414 1.06a.25.25 0 00-.354 0L3.462 11.098a.25.25 0 00-.064.108l-.631 2.208 2.208-.63a.25.25 0 00.108-.064l8.61-8.61a.25.25 0 000-.354l-1.086-1.086z" />
@@ -383,6 +336,15 @@ export default function TemplatePicker({ onClose }: TemplatePickerProps) {
           </button>
         </div>
       </div>
+
+      {/* Template editor overlay */}
+      {editingTemplate && (
+        <TemplateEditor
+          template={editingTemplate}
+          onClose={() => setEditingTemplate(null)}
+          onSaved={reloadTemplates}
+        />
+      )}
     </div>
   );
 }

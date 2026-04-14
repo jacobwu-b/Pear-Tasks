@@ -124,12 +124,22 @@ export async function getTemplate(id: string): Promise<ProjectTemplate | undefin
 
 export async function updateTemplate(
   id: string,
-  changes: Partial<Pick<ProjectTemplate, 'name'>>
+  changes: Partial<Pick<ProjectTemplate, 'name' | 'tasks' | 'edges'>>
 ): Promise<Result<ProjectTemplate>> {
   const template = await db.templates.get(id);
   if (!template) return err('Template not found');
   if (template.builtIn) return err('Cannot modify built-in templates');
   if (changes.name !== undefined && !changes.name.trim()) return err('Template name is required');
+
+  // Validate edge references against the task list that will be stored
+  if (changes.edges) {
+    const taskTempIds = new Set((changes.tasks ?? template.tasks).map((t) => t.tempId));
+    for (const edge of changes.edges) {
+      if (!taskTempIds.has(edge.fromTempId) || !taskTempIds.has(edge.toTempId)) {
+        return err('Edge references a task that does not exist in the template');
+      }
+    }
+  }
 
   await db.templates.update(id, changes);
   const updated = await db.templates.get(id);

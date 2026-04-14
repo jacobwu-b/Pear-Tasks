@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Area, Project, Task, ChecklistItem, DependencyEdge, ProjectTemplate } from '../types';
+import type { Area, Project, Task, ChecklistItem, DependencyEdge, ProjectTemplate, TemplateTask, TemplateEdge } from '../types';
 import type { SidebarView } from './uiStore';
 import {
   getTemplates as dbGetTemplates,
@@ -70,7 +70,7 @@ interface TaskState {
   loadTemplates: () => Promise<ProjectTemplate[]>;
   instantiateTemplate: (templateId: string, projectName: string, areaId: string | null) => Promise<{ projectId: string | null; error: string | null }>;
   saveProjectAsTemplate: (projectId: string, name: string) => Promise<{ error: string | null }>;
-  updateTemplate: (id: string, changes: { name: string }) => Promise<{ error: string | null }>;
+  updateTemplate: (id: string, changes: Partial<Pick<ProjectTemplate, 'name' | 'tasks' | 'edges'>>) => Promise<{ error: string | null }>;
   deleteTemplate: (id: string) => Promise<{ error: string | null }>;
 }
 
