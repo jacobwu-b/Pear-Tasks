@@ -1,50 +1,17 @@
-import { useState, useEffect, useCallback } from 'react';
-import type { Task, DependencyEdge } from '../../types';
-import { useTaskStore } from '../../store/taskStore';
-import { getTask } from '../../db/operations';
+import { useState } from 'react';
+import type { Task } from '../../types';
+import { useTaskStore, type ResolvedDep } from '../../store/taskStore';
+import { useResolvedDeps } from '../../hooks/useResolvedDeps';
 import DependencyPicker from './DependencyPicker';
 
 interface DependencySectionProps {
   task: Task;
-  onChanged: () => void;
 }
 
-interface ResolvedDep {
-  edge: DependencyEdge;
-  task: Task;
-  direction: 'blocks' | 'blockedBy';
-}
-
-export default function DependencySection({ task, onChanged }: DependencySectionProps) {
-  const { getTaskDeps, removeDependency } = useTaskStore();
-  const [deps, setDeps] = useState<ResolvedDep[]>([]);
+export default function DependencySection({ task }: DependencySectionProps) {
+  const removeDependency = useTaskStore((s) => s.removeDependency);
+  const deps = useResolvedDeps(task.id, task.projectId);
   const [showPicker, setShowPicker] = useState(false);
-
-  const loadDeps = useCallback(async () => {
-    if (!task.projectId) {
-      setDeps([]);
-      return;
-    }
-    const edges = await getTaskDeps(task.id);
-    const resolved: ResolvedDep[] = [];
-    for (const edge of edges) {
-      const isFrom = edge.fromTaskId === task.id;
-      const otherId = isFrom ? edge.toTaskId : edge.fromTaskId;
-      const otherTask = await getTask(otherId);
-      if (otherTask) {
-        resolved.push({
-          edge,
-          task: otherTask,
-          direction: isFrom ? 'blocks' : 'blockedBy',
-        });
-      }
-    }
-    setDeps(resolved);
-  }, [task.id, task.projectId, getTaskDeps]);
-
-  useEffect(() => {
-    loadDeps();
-  }, [loadDeps]);
 
   const handleRemove = async (dep: ResolvedDep) => {
     if (dep.direction === 'blockedBy') {
@@ -52,14 +19,10 @@ export default function DependencySection({ task, onChanged }: DependencySection
     } else {
       await removeDependency(task.id, dep.task.id);
     }
-    await loadDeps();
-    onChanged();
   };
 
-  const handleAdded = async () => {
+  const handleAdded = () => {
     setShowPicker(false);
-    await loadDeps();
-    onChanged();
   };
 
   // Only show for tasks inside a project

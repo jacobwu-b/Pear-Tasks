@@ -1,31 +1,25 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState } from 'react';
 import type { ChecklistItem } from '../../types';
 import { useTaskStore } from '../../store/taskStore';
+import { useChecklist } from '../../hooks/useChecklist';
 
 interface ChecklistEditorProps {
   taskId: string;
 }
 
 export default function ChecklistEditor({ taskId }: ChecklistEditorProps) {
-  const { loadChecklist, addChecklistItem, toggleChecklistItem, updateChecklistItemTitle, deleteChecklistItem } = useTaskStore();
-  const [items, setItems] = useState<ChecklistItem[]>([]);
+  const addChecklistItem = useTaskStore((s) => s.addChecklistItem);
+  const toggleChecklistItem = useTaskStore((s) => s.toggleChecklistItem);
+  const updateChecklistItemTitle = useTaskStore((s) => s.updateChecklistItemTitle);
+  const deleteChecklistItem = useTaskStore((s) => s.deleteChecklistItem);
+  const items = useChecklist(taskId);
   const [newTitle, setNewTitle] = useState('');
-
-  const refresh = useCallback(async () => {
-    const loaded = await loadChecklist(taskId);
-    setItems(loaded);
-  }, [taskId, loadChecklist]);
-
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
 
   const handleAdd = async () => {
     const title = newTitle.trim();
     if (!title) return;
     await addChecklistItem(taskId, title);
     setNewTitle('');
-    await refresh();
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -36,13 +30,11 @@ export default function ChecklistEditor({ taskId }: ChecklistEditorProps) {
   };
 
   const handleToggle = async (item: ChecklistItem) => {
-    await toggleChecklistItem(item.id, !item.completed);
-    await refresh();
+    await toggleChecklistItem(taskId, item.id, !item.completed);
   };
 
   const handleDelete = async (id: string) => {
-    await deleteChecklistItem(id);
-    await refresh();
+    await deleteChecklistItem(taskId, id);
   };
 
   const completedCount = items.filter((i) => i.completed).length;
@@ -87,8 +79,7 @@ export default function ChecklistEditor({ taskId }: ChecklistEditorProps) {
             <ChecklistItemTitle
               item={item}
               onSave={async (newTitle) => {
-                await updateChecklistItemTitle(item.id, newTitle);
-                await refresh();
+                await updateChecklistItemTitle(taskId, item.id, newTitle);
               }}
             />
             <button
@@ -136,11 +127,16 @@ function ChecklistItemTitle({
 }) {
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(item.title);
+  const [syncedTitle, setSyncedTitle] = useState(item.title);
 
-  // Sync if item changes externally
-  useEffect(() => {
-    setValue(item.title);
-  }, [item.title]);
+  // Sync if the item's title changes externally — but never while the user is
+  // editing, to avoid clobbering in-flight keystrokes. React allows setState
+  // during render when it's conditional on a prop change; this is the
+  // recommended alternative to a syncing useEffect.
+  if (item.title !== syncedTitle) {
+    setSyncedTitle(item.title);
+    if (!editing) setValue(item.title);
+  }
 
   const commit = async () => {
     setEditing(false);

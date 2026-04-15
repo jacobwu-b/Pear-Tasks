@@ -1,85 +1,76 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useState, useRef } from 'react';
 import { useUiStore } from '../../store/uiStore';
 import { useTaskStore } from '../../store/taskStore';
-import { getTask } from '../../db/operations';
-import type { Task } from '../../types';
+import { useSelectedTask } from '../../hooks/useSelectedTask';
 import ChecklistEditor from './ChecklistEditor';
 import TagEditor from './TagEditor';
 import DependencySection from '../dependencies/DependencySection';
 
 export default function TaskDetail() {
-  const { selectedTaskId, setSelectedTaskId } = useUiStore();
+  const { setSelectedTaskId } = useUiStore();
   const { updateTaskField, completeTask, cancelTask, reopenTask, deleteTask } = useTaskStore();
 
-  const [task, setTask] = useState<Task | null>(null);
+  const task = useSelectedTask();
+
+  // Local draft state for the two text inputs. These must NOT be re-synced on
+  // every task update — only when the selected task ID actually changes — or
+  // in-flight saves will clobber keystrokes the user is still typing. See
+  // Issue #12.
   const [title, setTitle] = useState('');
   const [notes, setNotes] = useState('');
+  const [syncedTaskId, setSyncedTaskId] = useState<string | null>(null);
   const titleRef = useRef<HTMLInputElement>(null);
 
-  const loadTask = useCallback(async () => {
-    if (!selectedTaskId) return;
-    const t = await getTask(selectedTaskId);
-    if (t) {
-      setTask(t);
-      setTitle(t.title);
-      setNotes(t.notes);
-    }
-  }, [selectedTaskId]);
-
-  useEffect(() => {
-    loadTask();
-  }, [loadTask]);
+  if (task && task.id !== syncedTaskId) {
+    // React allows setState during render when it's conditional on a prop
+    // change. This is the recommended alternative to a syncing useEffect.
+    setSyncedTaskId(task.id);
+    setTitle(task.title);
+    setNotes(task.notes);
+  }
 
   // Save title on blur
   const handleTitleBlur = async () => {
     if (!task || title === task.title) return;
     await updateTaskField(task.id, { title });
-    await loadTask();
   };
 
   // Save notes on blur
   const handleNotesBlur = async () => {
     if (!task || notes === task.notes) return;
     await updateTaskField(task.id, { notes });
-    await loadTask();
   };
 
   const handleWhenChange = async (value: string) => {
     if (!task) return;
     const when = value === '' ? null : value;
     await updateTaskField(task.id, { when });
-    await loadTask();
   };
 
   const handleDeadlineChange = async (value: string) => {
     if (!task) return;
     const deadline = value === '' ? null : value;
     await updateTaskField(task.id, { deadline });
-    await loadTask();
   };
 
   const handleTagsChange = async (tags: string[]) => {
     if (!task) return;
     await updateTaskField(task.id, { tags });
-    await loadTask();
   };
 
   const handleComplete = async () => {
     if (!task) return;
     await completeTask(task.id);
-    await loadTask();
   };
 
   const handleCancel = async () => {
     if (!task) return;
     await cancelTask(task.id);
-    await loadTask();
   };
 
   const handleReopen = async () => {
     if (!task) return;
     await reopenTask(task.id);
-    await loadTask();
   };
 
   const handleDelete = async () => {
@@ -242,7 +233,7 @@ export default function TaskDetail() {
         </div>
 
         {/* Dependencies */}
-        <DependencySection task={task} onChanged={loadTask} />
+        <DependencySection task={task} />
 
         {/* Checklist */}
         <ChecklistEditor taskId={task.id} />
