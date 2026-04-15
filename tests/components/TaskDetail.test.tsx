@@ -72,6 +72,45 @@ describe('TaskDetail', () => {
     expect(updated!.title).toBe('Updated Title');
   });
 
+  it('does not clobber in-flight title edits when the store refreshes', async () => {
+    // Regression test for #12: after a save triggers a store refresh, the
+    // newly-fetched task must not reset the title input if the user has
+    // already started typing the next edit.
+    const { data: task } = await createTask('First');
+    useUiStore.setState({ selectedTaskId: task!.id });
+    await useTaskStore.getState().loadTasksForView('inbox');
+
+    await act(async () => {
+      render(<TaskDetail />);
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+
+    const titleInput = screen.getByTestId('task-title-input') as HTMLInputElement;
+
+    // First edit: commit "Second" via blur (triggers updateTaskField + store refresh)
+    await act(async () => {
+      fireEvent.change(titleInput, { target: { value: 'Second' } });
+      fireEvent.blur(titleInput);
+    });
+
+    // User immediately starts typing the next edit *before* re-blurring
+    await act(async () => {
+      fireEvent.change(titleInput, { target: { value: 'Third-in-progress' } });
+    });
+
+    // Simulate any additional store refreshes (e.g. a sibling mutation)
+    await act(async () => {
+      await useTaskStore.getState().refreshTasks();
+      await new Promise((r) => setTimeout(r, 20));
+    });
+
+    // The input must still reflect what the user was typing — not snap back
+    // to the previously-saved title.
+    expect(titleInput.value).toBe('Third-in-progress');
+  });
+
   it('saves notes on blur', async () => {
     const { data: task } = await createTask('Task with notes');
     useUiStore.setState({ selectedTaskId: task!.id });

@@ -24,6 +24,7 @@ import {
   getTrashTasks,
   getTasksByProject,
   getTasksByArea,
+  getTask,
   updateTask as dbUpdateTask,
   createTask as dbCreateTask,
   softDeleteTask as dbSoftDeleteTask,
@@ -38,6 +39,18 @@ import {
   getDependencyEdges as dbGetDependencyEdges,
 } from '../db/operations';
 
+/**
+ * A dependency edge joined with the "other" task for UI display.
+ * `direction` is from the perspective of the task the section is showing:
+ * - 'blocks' means this task blocks `task`
+ * - 'blockedBy' means this task is blocked by `task`
+ */
+export interface ResolvedDep {
+  edge: DependencyEdge;
+  task: Task;
+  direction: 'blocks' | 'blockedBy';
+}
+
 interface TaskState {
   areas: Area[];
   projects: Project[];
@@ -46,6 +59,12 @@ interface TaskState {
   edges: DependencyEdge[];
   /** Currently loaded view (to know when to reload) */
   currentView: SidebarView | null;
+  /** Fresh snapshot of the task whose detail panel is open. Null when no task is selected. */
+  selectedTaskDetail: Task | null;
+  /** Checklist items keyed by taskId. Populated on demand by loadChecklist. */
+  checklistByTaskId: Record<string, ChecklistItem[]>;
+  /** Resolved (edge + other-task) dependency rows keyed by taskId. Populated on demand by loadResolvedDeps. */
+  resolvedDepsByTaskId: Record<string, ResolvedDep[]>;
 
   loadSidebarData: () => Promise<void>;
   loadTasksForView: (view: SidebarView) => Promise<void>;
@@ -61,17 +80,23 @@ interface TaskState {
   deleteTask: (id: string) => Promise<void>;
   restoreTask: (id: string) => Promise<void>;
 
+  // Selected task detail
+  /** Load the task for the detail panel into `selectedTaskDetail`. Pass null to clear. */
+  loadSelectedTaskDetail: (id: string | null) => Promise<void>;
+
   // Checklist
-  loadChecklist: (taskId: string) => Promise<ChecklistItem[]>;
+  /** Load checklist items for a task into `checklistByTaskId`. */
+  loadChecklist: (taskId: string) => Promise<void>;
   addChecklistItem: (taskId: string, title: string) => Promise<void>;
-  toggleChecklistItem: (id: string, completed: boolean) => Promise<void>;
-  updateChecklistItemTitle: (id: string, title: string) => Promise<void>;
-  deleteChecklistItem: (id: string) => Promise<void>;
+  toggleChecklistItem: (taskId: string, id: string, completed: boolean) => Promise<void>;
+  updateChecklistItemTitle: (taskId: string, id: string, title: string) => Promise<void>;
+  deleteChecklistItem: (taskId: string, id: string) => Promise<void>;
 
   // Dependencies
   addDependency: (fromTaskId: string, toTaskId: string, projectId: string) => Promise<{ error: string | null }>;
   removeDependency: (fromTaskId: string, toTaskId: string) => Promise<void>;
-  getTaskDeps: (taskId: string) => Promise<DependencyEdge[]>;
+  /** Load edges-joined-with-other-task for a task into `resolvedDepsByTaskId`. */
+  loadResolvedDeps: (taskId: string) => Promise<void>;
 
   // Areas
   createNewArea: (title: string) => Promise<Area | null>;
@@ -110,12 +135,68 @@ async function fetchEdgesForView(view: SidebarView): Promise<DependencyEdge[]> {
   return [];
 }
 
+async function resolveDepsForTask(taskId: string): Promise<ResolvedDep[]> {
+  const edges = await dbGetTaskDependencies(taskId);
+  const resolved: ResolvedDep[] = [];
+  for (const edge of edges) {
+    const isFrom = edge.fromTaskId === taskId;
+    const otherId = isFrom ? edge.toTaskId : edge.fromTaskId;
+    const otherTask = await getTask(otherId);
+    if (otherTask) {
+      resolved.push({
+        edge,
+        task: otherTask,
+        direction: isFrom ? 'blocks' : 'blockedBy',
+      });
+    }
+  }
+  return resolved;
+}
+
+/**
+ * Refresh every cached detail slice that's currently loaded: selectedTaskDetail,
+ * and every taskId already present in checklistByTaskId / resolvedDepsByTaskId.
+ * Called from refreshTasks so any mutation keeps open panels in sync.
+ */
+async function refreshDetailCaches(state: {
+  selectedTaskDetail: Task | null;
+  checklistByTaskId: Record<string, ChecklistItem[]>;
+  resolvedDepsByTaskId: Record<string, ResolvedDep[]>;
+}): Promise<{
+  selectedTaskDetail: Task | null;
+  checklistByTaskId: Record<string, ChecklistItem[]>;
+  resolvedDepsByTaskId: Record<string, ResolvedDep[]>;
+}> {
+  const selectedId = state.selectedTaskDetail?.id ?? null;
+  const checklistKeys = Object.keys(state.checklistByTaskId);
+  const depsKeys = Object.keys(state.resolvedDepsByTaskId);
+
+  const [selectedTaskDetail, checklistEntries, depsEntries] = await Promise.all([
+    selectedId ? getTask(selectedId) : Promise.resolve(null),
+    Promise.all(
+      checklistKeys.map(async (id) => [id, await getChecklistItems(id)] as const)
+    ),
+    Promise.all(
+      depsKeys.map(async (id) => [id, await resolveDepsForTask(id)] as const)
+    ),
+  ]);
+
+  return {
+    selectedTaskDetail: selectedTaskDetail ?? null,
+    checklistByTaskId: Object.fromEntries(checklistEntries),
+    resolvedDepsByTaskId: Object.fromEntries(depsEntries),
+  };
+}
+
 export const useTaskStore = create<TaskState>((set, get) => ({
   areas: [],
   projects: [],
   tasks: [],
   edges: [],
   currentView: null,
+  selectedTaskDetail: null,
+  checklistByTaskId: {},
+  resolvedDepsByTaskId: {},
 
   loadSidebarData: async () => {
     const [areas, projects] = await Promise.all([getAreas(), getProjects()]);
@@ -132,12 +213,12 @@ export const useTaskStore = create<TaskState>((set, get) => ({
 
   refreshTasks: async () => {
     const { currentView } = get();
-    if (!currentView) return;
-    const [tasks, edges] = await Promise.all([
-      fetchTasksForView(currentView),
-      fetchEdgesForView(currentView),
+    const [tasks, edges, caches] = await Promise.all([
+      currentView ? fetchTasksForView(currentView) : Promise.resolve(get().tasks),
+      currentView ? fetchEdgesForView(currentView) : Promise.resolve(get().edges),
+      refreshDetailCaches(get()),
     ]);
-    set({ tasks, edges });
+    set({ tasks, edges, ...caches });
   },
 
   completeTask: async (id) => {
@@ -177,24 +258,38 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     await get().refreshTasks();
   },
 
+  loadSelectedTaskDetail: async (id) => {
+    if (!id) {
+      set({ selectedTaskDetail: null });
+      return;
+    }
+    const task = await getTask(id);
+    set({ selectedTaskDetail: task ?? null });
+  },
+
   loadChecklist: async (taskId) => {
-    return getChecklistItems(taskId);
+    const items = await getChecklistItems(taskId);
+    set((s) => ({ checklistByTaskId: { ...s.checklistByTaskId, [taskId]: items } }));
   },
 
   addChecklistItem: async (taskId, title) => {
     await dbAddChecklistItem(taskId, title);
+    await get().loadChecklist(taskId);
   },
 
-  toggleChecklistItem: async (id, completed) => {
+  toggleChecklistItem: async (taskId, id, completed) => {
     await dbUpdateChecklistItem(id, { completed });
+    await get().loadChecklist(taskId);
   },
 
-  updateChecklistItemTitle: async (id, title) => {
+  updateChecklistItemTitle: async (taskId, id, title) => {
     await dbUpdateChecklistItem(id, { title });
+    await get().loadChecklist(taskId);
   },
 
-  deleteChecklistItem: async (id) => {
+  deleteChecklistItem: async (taskId, id) => {
     await dbDeleteChecklistItem(id);
+    await get().loadChecklist(taskId);
   },
 
   addDependency: async (fromTaskId, toTaskId, projectId) => {
@@ -209,8 +304,9 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     await get().refreshTasks();
   },
 
-  getTaskDeps: async (taskId) => {
-    return dbGetTaskDependencies(taskId);
+  loadResolvedDeps: async (taskId) => {
+    const resolved = await resolveDepsForTask(taskId);
+    set((s) => ({ resolvedDepsByTaskId: { ...s.resolvedDepsByTaskId, [taskId]: resolved } }));
   },
 
   createNewArea: async (title) => {
