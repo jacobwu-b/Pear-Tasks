@@ -14,6 +14,7 @@ export interface Area {
   title: string;
   sortOrder: number;
   createdAt: number;
+  deletedAt: number | null;
 }
 
 export interface Project {

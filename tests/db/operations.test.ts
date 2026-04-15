@@ -75,6 +75,48 @@ describe('Areas', () => {
     expect(areas[0].title).toBe('B');
     expect(areas[1].title).toBe('A');
   });
+
+  it('initializes deletedAt to null on create', async () => {
+    const { data: area } = await createArea('Work');
+    expect(area!.deletedAt).toBeNull();
+  });
+
+  it('soft-deletes an area: row remains with deletedAt set, hidden from getAreas', async () => {
+    const { data: area } = await createArea('Work');
+    await deleteArea(area!.id);
+
+    const raw = await db.areas.get(area!.id);
+    expect(raw).toBeDefined();
+    expect(raw!.deletedAt).toBeTypeOf('number');
+
+    const listed = await getAreas();
+    expect(listed).toHaveLength(0);
+  });
+
+  it('does not cascade delete into projects — they are orphaned to No Area', async () => {
+    const { data: area } = await createArea('Work');
+    const { data: project } = await createProject('P1', area!.id);
+    await deleteArea(area!.id);
+
+    const p = await getProject(project!.id);
+    expect(p).toBeDefined();
+    expect(p!.areaId).toBeNull();
+    expect(p!.deletedAt).toBeNull();
+  });
+
+  it('orphans area-only tasks so they remain reachable in Inbox', async () => {
+    const { data: area } = await createArea('Work');
+    const { data: task } = await createTask('Loose task', { areaId: area!.id });
+    await deleteArea(area!.id);
+
+    const t = await getTask(task!.id);
+    expect(t!.areaId).toBeNull();
+
+    // Since the task has no project, no when, no deadline, it should
+    // appear in the Inbox view after orphaning.
+    const inbox = await getInboxTasks();
+    expect(inbox.map((x) => x.id)).toContain(task!.id);
+  });
 });
 
 // ── Projects ───────────────────────────────────────────────────────

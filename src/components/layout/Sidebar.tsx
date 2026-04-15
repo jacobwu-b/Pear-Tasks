@@ -1,6 +1,7 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useUiStore, type SidebarView } from '../../store/uiStore';
 import { useTaskStore } from '../../store/taskStore';
+import AreaDeleteConfirm from './AreaDeleteConfirm';
 
 // ── Icons (simple inline SVGs to avoid dependencies) ───────────────
 
@@ -113,7 +114,9 @@ interface SidebarProps {
 
 export default function Sidebar({ onNavigate, onNewProject }: SidebarProps) {
   const { sidebarView, setSidebarView } = useUiStore();
-  const { areas, projects, loadSidebarData } = useTaskStore();
+  const { areas, projects, loadSidebarData, createNewArea, renameArea, removeArea } = useTaskStore();
+  const [renamingAreaId, setRenamingAreaId] = useState<string | null>(null);
+  const [confirmingDeleteAreaId, setConfirmingDeleteAreaId] = useState<string | null>(null);
 
   useEffect(() => {
     loadSidebarData();
@@ -125,6 +128,18 @@ export default function Sidebar({ onNavigate, onNewProject }: SidebarProps) {
     setSidebarView(view);
     onNavigate?.();
   };
+
+  const handleNewArea = async () => {
+    const area = await createNewArea('New Area');
+    if (area) setRenamingAreaId(area.id);
+  };
+
+  const confirmingArea = confirmingDeleteAreaId
+    ? areas.find((a) => a.id === confirmingDeleteAreaId) ?? null
+    : null;
+  const confirmingProjectCount = confirmingArea
+    ? projects.filter((p) => p.areaId === confirmingArea.id).length
+    : 0;
 
   return (
     <nav
@@ -168,9 +183,9 @@ export default function Sidebar({ onNavigate, onNewProject }: SidebarProps) {
       {/* Divider */}
       <div className="mx-3 my-2" style={{ borderTop: '1px solid var(--color-border-primary)' }} />
 
-      {/* New Project button */}
-      {onNewProject && (
-        <div className="px-2 pb-1">
+      {/* New Project / New Area buttons */}
+      <div className="px-2 pb-1">
+        {onNewProject && (
           <button
             onClick={onNewProject}
             data-testid="sidebar-new-project"
@@ -190,8 +205,27 @@ export default function Sidebar({ onNavigate, onNewProject }: SidebarProps) {
             </svg>
             New Project
           </button>
-        </div>
-      )}
+        )}
+        <button
+          onClick={handleNewArea}
+          data-testid="sidebar-new-area"
+          className="flex items-center gap-2 w-full px-2.5 py-1.5 rounded-md text-sm font-medium transition-colors cursor-pointer"
+          style={{
+            color: 'var(--color-accent)',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.backgroundColor = 'var(--color-surface-hover)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.backgroundColor = 'transparent';
+          }}
+        >
+          <svg viewBox="0 0 16 16" fill="currentColor" className="w-4 h-4">
+            <path d="M8 2a.75.75 0 01.75.75v4.5h4.5a.75.75 0 010 1.5h-4.5v4.5a.75.75 0 01-1.5 0v-4.5h-4.5a.75.75 0 010-1.5h4.5v-4.5A.75.75 0 018 2z" />
+          </svg>
+          New Area
+        </button>
+      </div>
 
       {/* Areas & Projects tree */}
       <div className="px-2 pb-3 flex-1">
@@ -202,6 +236,17 @@ export default function Sidebar({ onNavigate, onNewProject }: SidebarProps) {
             projects={projects.filter((p) => p.areaId === area.id)}
             currentKey={currentKey}
             onSelect={handleNav}
+            renaming={renamingAreaId === area.id}
+            onRequestRename={() => setRenamingAreaId(area.id)}
+            onCommitRename={async (title) => {
+              const trimmed = title.trim();
+              if (trimmed && trimmed !== area.title) {
+                await renameArea(area.id, trimmed);
+              }
+              setRenamingAreaId(null);
+            }}
+            onCancelRename={() => setRenamingAreaId(null)}
+            onRequestDelete={() => setConfirmingDeleteAreaId(area.id)}
           />
         ))}
 
@@ -217,6 +262,19 @@ export default function Sidebar({ onNavigate, onNewProject }: SidebarProps) {
             />
           ))}
       </div>
+
+      {confirmingArea && (
+        <AreaDeleteConfirm
+          areaTitle={confirmingArea.title}
+          projectCount={confirmingProjectCount}
+          onCancel={() => setConfirmingDeleteAreaId(null)}
+          onConfirm={async () => {
+            const id = confirmingArea.id;
+            setConfirmingDeleteAreaId(null);
+            await removeArea(id);
+          }}
+        />
+      )}
     </nav>
   );
 }
@@ -228,34 +286,120 @@ function AreaGroup({
   projects,
   currentKey,
   onSelect,
+  renaming,
+  onRequestRename,
+  onCommitRename,
+  onCancelRename,
+  onRequestDelete,
 }: {
   area: { id: string; title: string };
   projects: { id: string; title: string }[];
   currentKey: string;
   onSelect: (view: SidebarView) => void;
+  renaming: boolean;
+  onRequestRename: () => void;
+  onCommitRename: (title: string) => void | Promise<void>;
+  onCancelRename: () => void;
+  onRequestDelete: () => void;
 }) {
   const isAreaActive = currentKey === `area:${area.id}`;
+  const [hovered, setHovered] = useState(false);
+
+  // Callback ref: focus + select the input the moment it mounts (when
+  // renaming flips true). Keeps focus logic out of useEffect to avoid
+  // set-state-in-effect patterns.
+  const focusInput = (el: HTMLInputElement | null) => {
+    if (el) {
+      el.focus();
+      el.select();
+    }
+  };
 
   return (
-    <div className="mb-1">
-      <button
-        onClick={() => onSelect({ type: 'area', areaId: area.id })}
-        data-testid={`sidebar-area-${area.id}`}
-        className="flex items-center gap-1.5 w-full px-2.5 py-1.5 rounded-md text-xs font-semibold uppercase tracking-wide transition-colors cursor-pointer"
+    <div
+      className="mb-1"
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      <div
+        className="flex items-center gap-1 w-full px-2.5 py-1.5 rounded-md"
         style={{
           color: isAreaActive ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)',
           backgroundColor: isAreaActive ? 'var(--color-surface-active)' : 'transparent',
         }}
-        onMouseEnter={(e) => {
-          if (!isAreaActive) e.currentTarget.style.backgroundColor = 'var(--color-surface-hover)';
-        }}
-        onMouseLeave={(e) => {
-          if (!isAreaActive) e.currentTarget.style.backgroundColor = 'transparent';
-        }}
       >
         <ChevronIcon expanded={true} />
-        {area.title}
-      </button>
+
+        {renaming ? (
+          <input
+            key={area.id}
+            ref={focusInput}
+            defaultValue={area.title}
+            data-testid={`sidebar-area-rename-${area.id}`}
+            onBlur={(e) => onCommitRename(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                onCommitRename(e.currentTarget.value);
+              } else if (e.key === 'Escape') {
+                e.preventDefault();
+                onCancelRename();
+              }
+            }}
+            className="flex-1 bg-transparent outline-none text-xs font-semibold uppercase tracking-wide"
+            style={{
+              color: 'var(--color-text-primary)',
+              border: '1px solid var(--color-border-primary)',
+              borderRadius: '4px',
+              padding: '1px 4px',
+            }}
+          />
+        ) : (
+          <>
+            <button
+              onClick={() => onSelect({ type: 'area', areaId: area.id })}
+              data-testid={`sidebar-area-${area.id}`}
+              className="flex-1 text-left text-xs font-semibold uppercase tracking-wide transition-colors cursor-pointer"
+              style={{ color: 'inherit', background: 'transparent' }}
+            >
+              {area.title}
+            </button>
+
+            {hovered && (
+              <div className="flex items-center gap-0.5">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRequestRename();
+                  }}
+                  data-testid={`sidebar-area-rename-btn-${area.id}`}
+                  title="Rename area"
+                  className="p-1 rounded cursor-pointer"
+                  style={{ color: 'var(--color-text-tertiary)' }}
+                >
+                  <svg viewBox="0 0 16 16" fill="currentColor" className="w-3.5 h-3.5">
+                    <path d="M12.146 1.146a.5.5 0 01.708 0l2 2a.5.5 0 010 .708l-9 9a.5.5 0 01-.168.11l-4 1.5A.5.5 0 011 13.5l1.5-4a.5.5 0 01.11-.168l9-9zM11.5 3L13 4.5 4.914 12.586l-1.829.686.686-1.829L11.5 3z" />
+                  </svg>
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRequestDelete();
+                  }}
+                  data-testid={`sidebar-area-delete-btn-${area.id}`}
+                  title="Delete area"
+                  className="p-1 rounded cursor-pointer"
+                  style={{ color: 'var(--color-text-tertiary)' }}
+                >
+                  <svg viewBox="0 0 16 16" fill="currentColor" className="w-3.5 h-3.5">
+                    <path d="M6.5 1a1 1 0 00-1 1v.5H3a.5.5 0 000 1h.472l.658 9.211A2 2 0 006.126 14.5h3.748a2 2 0 001.996-1.789L12.528 3.5H13a.5.5 0 000-1h-2.5V2a1 1 0 00-1-1h-3zm3 1.5h-3V2h3v.5z" />
+                  </svg>
+                </button>
+              </div>
+            )}
+          </>
+        )}
+      </div>
 
       <div className="ml-3">
         {projects.map((project) => (

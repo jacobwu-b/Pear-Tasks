@@ -27,6 +27,17 @@ export class PearDatabase extends Dexie {
       dependencyEdges: 'id, fromTaskId, toTaskId, projectId',
       templates: 'id, builtIn',
     });
+
+    // v2: add soft-delete to areas. Backfill existing rows with deletedAt=null.
+    this.version(2)
+      .stores({
+        areas: 'id, sortOrder, deletedAt',
+      })
+      .upgrade(async (tx) => {
+        await tx.table('areas').toCollection().modify((a: Area) => {
+          if (a.deletedAt === undefined) a.deletedAt = null;
+        });
+      });
   }
 }
 

@@ -33,6 +33,7 @@ export async function createArea(
     title,
     sortOrder: (maxOrder?.sortOrder ?? -1) + 1,
     createdAt: Date.now(),
+    deletedAt: null,
   };
   await db.areas.add(area);
   return ok(area);
@@ -49,16 +50,22 @@ export async function updateArea(
 }
 
 export async function deleteArea(id: string): Promise<Result<void>> {
-  await db.areas.delete(id);
-  // Orphan projects — set their areaId to null
+  // Soft delete: mark the area deleted but keep the row so we could
+  // theoretically restore it later. No purge schedule (per product decision).
+  await db.areas.update(id, { deletedAt: Date.now() });
+  // Orphan projects — set their areaId to null so they appear in "No Area"
   await db.projects.where('areaId').equals(id).modify({ areaId: null });
-  // Orphan loose tasks under this area
+  // Orphan loose tasks under this area so they remain reachable via
+  // Inbox / Today / Anytime depending on their "when" field.
   await db.tasks.where('areaId').equals(id).modify({ areaId: null });
   return ok(undefined);
 }
 
 export async function getAreas(): Promise<Area[]> {
-  return db.areas.orderBy('sortOrder').toArray();
+  return db.areas
+    .orderBy('sortOrder')
+    .filter((a) => a.deletedAt === null)
+    .toArray();
 }
 
 // ── Projects ───────────────────────────────────────────────────────
