@@ -76,7 +76,7 @@ interface TaskState {
   cancelTask: (id: string) => Promise<void>;
   reopenTask: (id: string) => Promise<void>;
   updateTaskField: (id: string, changes: Partial<Omit<Task, 'id' | 'createdAt'>>) => Promise<void>;
-  createNewTask: (title: string, options?: Partial<Pick<Task, 'projectId' | 'areaId' | 'when' | 'deadline' | 'tags'>>) => Promise<Task | null>;
+  createNewTask: (title: string, options?: Partial<Pick<Task, 'projectId' | 'areaId' | 'when' | 'deadline' | 'tags' | 'notes'>>) => Promise<Task | null>;
   deleteTask: (id: string) => Promise<void>;
   restoreTask: (id: string) => Promise<void>;
 
