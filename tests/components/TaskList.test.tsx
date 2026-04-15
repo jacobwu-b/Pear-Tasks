@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act, cleanup } from '@testing-library/react';
-import { createTask, createProject, getTask } from '../../src/db/operations';
+import { createTask, createProject, getTask, addDependency } from '../../src/db/operations';
 import { useUiStore } from '../../src/store/uiStore';
 import { useTaskStore } from '../../src/store/taskStore';
 import TaskList from '../../src/components/tasks/TaskList';
@@ -72,6 +72,37 @@ describe('TaskList', () => {
 
     expect(screen.getByText('Project task')).toBeDefined();
     expect(screen.queryByText('Inbox task')).toBeNull();
+  });
+
+  it('orders project tasks topologically so a newly-added blocker appears first', async () => {
+    const { data: project } = await createProject('Ordered Project');
+    const pid = project!.id;
+    // Create A and B first (inserted earlier => lower sortOrder).
+    const { data: a } = await createTask('Task A', { projectId: pid });
+    const { data: b } = await createTask('Task B', { projectId: pid });
+    // Then create C, which will block both A and B (C must finish first).
+    const { data: c } = await createTask('Task C', { projectId: pid });
+    await addDependency(c!.id, a!.id, pid);
+    await addDependency(c!.id, b!.id, pid);
+
+    useUiStore.setState({ sidebarView: { type: 'project', projectId: pid } });
+    await useTaskStore.getState().loadSidebarData();
+
+    await act(async () => {
+      render(<TaskList />);
+    });
+
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+
+    const rows = screen.getAllByTestId(/^task-row-/);
+    const orderedIds = rows.map((el) =>
+      (el.getAttribute('data-testid') ?? '').replace('task-row-', '')
+    );
+    // C must come before A and B, even though it was inserted last.
+    expect(orderedIds.indexOf(c!.id)).toBeLessThan(orderedIds.indexOf(a!.id));
+    expect(orderedIds.indexOf(c!.id)).toBeLessThan(orderedIds.indexOf(b!.id));
   });
 
   it('toggles task completion via checkbox', async () => {

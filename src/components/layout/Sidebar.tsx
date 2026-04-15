@@ -107,9 +107,11 @@ function viewKey(view: SidebarView): string {
 interface SidebarProps {
   /** Called after any navigation item is selected (used to close mobile overlay) */
   onNavigate?: () => void;
+  /** Called when the user clicks "New Project" to open the template picker */
+  onNewProject?: () => void;
 }
 
-export default function Sidebar({ onNavigate }: SidebarProps) {
+export default function Sidebar({ onNavigate, onNewProject }: SidebarProps) {
   const { sidebarView, setSidebarView } = useUiStore();
   const { areas, projects, loadSidebarData } = useTaskStore();
 
@@ -165,6 +167,31 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
 
       {/* Divider */}
       <div className="mx-3 my-2" style={{ borderTop: '1px solid var(--color-border-primary)' }} />
+
+      {/* New Project button */}
+      {onNewProject && (
+        <div className="px-2 pb-1">
+          <button
+            onClick={onNewProject}
+            data-testid="sidebar-new-project"
+            className="flex items-center gap-2 w-full px-2.5 py-1.5 rounded-md text-sm font-medium transition-colors cursor-pointer"
+            style={{
+              color: 'var(--color-accent)',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = 'var(--color-surface-hover)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = 'transparent';
+            }}
+          >
+            <svg viewBox="0 0 16 16" fill="currentColor" className="w-4 h-4">
+              <path d="M8 2a.75.75 0 01.75.75v4.5h4.5a.75.75 0 010 1.5h-4.5v4.5a.75.75 0 01-1.5 0v-4.5h-4.5a.75.75 0 010-1.5h4.5v-4.5A.75.75 0 018 2z" />
+            </svg>
+            New Project
+          </button>
+        </div>
+      )}
 
       {/* Areas & Projects tree */}
       <div className="px-2 pb-3 flex-1">

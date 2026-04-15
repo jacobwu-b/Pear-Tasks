@@ -3,10 +3,12 @@ import { useUiStore, type SidebarView } from '../../store/uiStore';
 import { useTaskStore } from '../../store/taskStore';
 import { useViewTasks } from '../../hooks/useViewTasks';
 import { getDependencyEdges } from '../../db/operations';
+import { topologicalSort } from '../../db/graph';
 import type { DependencyEdge, Task } from '../../types';
 import TaskRow from './TaskRow';
 import LinkModeToolbar from '../dependencies/LinkModeToolbar';
 import GraphView from '../projects/GraphView';
+import SaveAsTemplateDialog from '../templates/SaveAsTemplateDialog';
 
 function viewTitle(
   view: SidebarView,
@@ -50,6 +52,7 @@ export default function TaskList() {
   const { sidebarView, linkMode, enterLinkMode } = useUiStore();
   const { projects, areas, createNewTask } = useTaskStore();
   const tasks = useViewTasks();
+  const [showSaveTemplate, setShowSaveTemplate] = useState(false);
 
   // Load dependency edges for project views to show blocked indicators
   const [edges, setEdges] = useState<DependencyEdge[]>([]);
@@ -64,6 +67,18 @@ export default function TaskList() {
       setEdges([]);
     }
   }, [projectId, tasks]); // re-fetch edges when tasks change
+
+  // For project views, order tasks topologically so the list matches the
+  // left-to-right ordering of the dependency graph above. Kahn's algorithm
+  // preserves original (sortOrder) order among tasks with no dependency
+  // relationships, so unconnected tasks stay in their existing positions.
+  const orderedTasks = useMemo(() => {
+    if (!projectId || edges.length === 0) return tasks;
+    const ids = tasks.map((t) => t.id);
+    const sortedIds = topologicalSort(ids, edges);
+    const byId = new Map(tasks.map((t) => [t.id, t] as const));
+    return sortedIds.map((id) => byId.get(id)!).filter(Boolean);
+  }, [tasks, edges, projectId]);
 
   // Compute blocked counts per task
   const blockedCounts = useMemo(() => {
@@ -154,6 +169,30 @@ export default function TaskList() {
               Link
             </button>
           )}
+          {/* Save as Template — only for project views */}
+          {projectId && (
+            <button
+              onClick={() => setShowSaveTemplate(true)}
+              data-testid="save-as-template-btn"
+              className="flex items-center gap-1 px-2.5 py-1 rounded-md text-sm font-medium transition-colors cursor-pointer"
+              style={{
+                color: 'var(--color-text-secondary)',
+                backgroundColor: 'transparent',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = 'var(--color-surface-hover)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = 'transparent';
+              }}
+              title="Save this project as a reusable template"
+            >
+              <svg viewBox="0 0 16 16" fill="currentColor" className="w-4 h-4">
+                <path d="M2 4a2 2 0 012-2h4.586A2 2 0 0110 2.586L13.414 6A2 2 0 0114 7.414V12a2 2 0 01-2 2H4a2 2 0 01-2-2V4zm2 0v8h8V7.414L8.586 4H4z" />
+              </svg>
+              Template
+            </button>
+          )}
           {!isTrash && (
             <button
               onClick={handleAddTask}
@@ -183,7 +222,7 @@ export default function TaskList() {
 
       {/* Dependency graph panel — shown on top for project views with edges */}
       {projectId && (
-        <GraphView tasks={tasks} edges={edges} />
+        <GraphView tasks={orderedTasks} edges={edges} />
       )}
 
       {/* Task list */}
@@ -215,11 +254,20 @@ export default function TaskList() {
             </div>
           ))
         ) : (
-          tasks.map((task) => (
+          orderedTasks.map((task) => (
             <TaskRow key={task.id} task={task} blockedByCount={blockedCounts.get(task.id) ?? 0} />
           ))
         )}
       </div>
+
+      {/* Save as Template dialog */}
+      {showSaveTemplate && projectId && (
+        <SaveAsTemplateDialog
+          projectId={projectId}
+          projectName={title}
+          onClose={() => setShowSaveTemplate(false)}
+        />
+      )}
     </div>
   );
 }

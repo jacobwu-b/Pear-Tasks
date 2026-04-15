@@ -1,6 +1,13 @@
 import { create } from 'zustand';
-import type { Area, Project, Task, ChecklistItem, DependencyEdge } from '../types';
+import type { Area, Project, Task, ChecklistItem, DependencyEdge, ProjectTemplate } from '../types';
 import type { SidebarView } from './uiStore';
+import {
+  getTemplates as dbGetTemplates,
+  instantiateTemplate as dbInstantiateTemplate,
+  saveAsTemplate as dbSaveAsTemplate,
+  updateTemplate as dbUpdateTemplate,
+  deleteTemplate as dbDeleteTemplate,
+} from '../db/templates';
 import {
   getAreas,
   getProjects,
@@ -58,6 +65,13 @@ interface TaskState {
   addDependency: (fromTaskId: string, toTaskId: string, projectId: string) => Promise<{ error: string | null }>;
   removeDependency: (fromTaskId: string, toTaskId: string) => Promise<void>;
   getTaskDeps: (taskId: string) => Promise<DependencyEdge[]>;
+
+  // Templates
+  loadTemplates: () => Promise<ProjectTemplate[]>;
+  instantiateTemplate: (templateId: string, projectName: string, areaId: string | null) => Promise<{ projectId: string | null; error: string | null }>;
+  saveProjectAsTemplate: (projectId: string, name: string) => Promise<{ error: string | null }>;
+  updateTemplate: (id: string, changes: Partial<Pick<ProjectTemplate, 'name' | 'tasks' | 'edges'>>) => Promise<{ error: string | null }>;
+  deleteTemplate: (id: string) => Promise<{ error: string | null }>;
 }
 
 async function fetchTasksForView(view: SidebarView): Promise<Task[]> {
@@ -171,5 +185,34 @@ export const useTaskStore = create<TaskState>((set, get) => ({
 
   getTaskDeps: async (taskId) => {
     return dbGetTaskDependencies(taskId);
+  },
+
+  loadTemplates: async () => {
+    return dbGetTemplates();
+  },
+
+  instantiateTemplate: async (templateId, projectName, areaId) => {
+    const result = await dbInstantiateTemplate(templateId, projectName, areaId);
+    if (result.error) return { projectId: null, error: result.error };
+    await get().loadSidebarData();
+    return { projectId: result.data!.projectId, error: null };
+  },
+
+  saveProjectAsTemplate: async (projectId, name) => {
+    const result = await dbSaveAsTemplate(projectId, name);
+    if (result.error) return { error: result.error };
+    return { error: null };
+  },
+
+  updateTemplate: async (id, changes) => {
+    const result = await dbUpdateTemplate(id, changes);
+    if (result.error) return { error: result.error };
+    return { error: null };
+  },
+
+  deleteTemplate: async (id) => {
+    const result = await dbDeleteTemplate(id);
+    if (result.error) return { error: result.error };
+    return { error: null };
   },
 }));
