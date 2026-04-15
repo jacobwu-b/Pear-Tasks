@@ -8,9 +8,13 @@ import {
   updateTemplate as dbUpdateTemplate,
   deleteTemplate as dbDeleteTemplate,
 } from '../db/templates';
+import { useUiStore } from './uiStore';
 import {
   getAreas,
   getProjects,
+  createArea as dbCreateArea,
+  updateArea as dbUpdateArea,
+  deleteArea as dbDeleteArea,
   getInboxTasks,
   getTodayTasks,
   getUpcomingTasks,
@@ -65,6 +69,11 @@ interface TaskState {
   addDependency: (fromTaskId: string, toTaskId: string, projectId: string) => Promise<{ error: string | null }>;
   removeDependency: (fromTaskId: string, toTaskId: string) => Promise<void>;
   getTaskDeps: (taskId: string) => Promise<DependencyEdge[]>;
+
+  // Areas
+  createNewArea: (title: string) => Promise<Area | null>;
+  renameArea: (id: string, title: string) => Promise<void>;
+  removeArea: (id: string) => Promise<void>;
 
   // Templates
   loadTemplates: () => Promise<ProjectTemplate[]>;
@@ -185,6 +194,32 @@ export const useTaskStore = create<TaskState>((set, get) => ({
 
   getTaskDeps: async (taskId) => {
     return dbGetTaskDependencies(taskId);
+  },
+
+  createNewArea: async (title) => {
+    const result = await dbCreateArea(title);
+    if (result.error) return null;
+    await get().loadSidebarData();
+    return result.data;
+  },
+
+  renameArea: async (id, title) => {
+    await dbUpdateArea(id, { title });
+    await get().loadSidebarData();
+  },
+
+  removeArea: async (id) => {
+    await dbDeleteArea(id);
+    // If the deleted area was the current view, fall back to Inbox so the
+    // user doesn't land on an empty/nonexistent view.
+    const current = useUiStore.getState().sidebarView;
+    if (typeof current === 'object' && current.type === 'area' && current.areaId === id) {
+      useUiStore.getState().setSidebarView('inbox');
+    }
+    await get().loadSidebarData();
+    // Projects' areaId was nulled — refresh tasks too in case the current
+    // view is a project under this area (still valid, but stay consistent).
+    await get().refreshTasks();
   },
 
   loadTemplates: async () => {
