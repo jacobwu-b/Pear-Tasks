@@ -58,6 +58,41 @@ describe('blocked task filtering', () => {
     expect(ids).not.toContain(blocked!.id);
   });
 
+  it('filters correctly when Today view spans multiple projects (scoped edge query)', async () => {
+    // Regression test for #11: getAllBlockedTaskIds was rewritten to scope
+    // edges to the projects visible in the view rather than scanning the
+    // whole dependencyEdges table. Verify blocking still works across
+    // projects and that unrelated-project edges do not leak in.
+    const today = new Date().toISOString().split('T')[0];
+    const { data: pA } = await createProject('A');
+    const { data: pB } = await createProject('B');
+    const { data: pC } = await createProject('C');
+
+    const { data: a1 } = await createTask('A blocker', { projectId: pA!.id, when: today });
+    const { data: a2 } = await createTask('A blocked', { projectId: pA!.id, when: today });
+    await addDependency(a1!.id, a2!.id, pA!.id);
+
+    const { data: b1 } = await createTask('B blocker', { projectId: pB!.id, when: today });
+    const { data: b2 } = await createTask('B blocked', { projectId: pB!.id, when: today });
+    await addDependency(b1!.id, b2!.id, pB!.id);
+
+    // Project C has an unrelated edge between tasks that are not in the Today view.
+    const { data: c1 } = await createTask('C1', { projectId: pC!.id });
+    const { data: c2 } = await createTask('C2', { projectId: pC!.id });
+    await addDependency(c1!.id, c2!.id, pC!.id);
+
+    const ids = (await getTodayTasks()).map((t) => t.id);
+    expect(ids).toContain(a1!.id);
+    expect(ids).not.toContain(a2!.id);
+    expect(ids).toContain(b1!.id);
+    expect(ids).not.toContain(b2!.id);
+    // Project C tasks are not in Today at all, but this asserts the scoped
+    // edge query didn't throw or miscount when some projects have edges
+    // that aren't relevant to the view.
+    expect(ids).not.toContain(c1!.id);
+    expect(ids).not.toContain(c2!.id);
+  });
+
   it('does not filter tasks without dependencies', async () => {
     const today = new Date().toISOString().split('T')[0];
     await createTask('Regular task', { when: today });

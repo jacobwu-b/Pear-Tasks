@@ -172,10 +172,12 @@ export async function updateTask(
 }
 
 export async function softDeleteTask(id: string): Promise<Result<void>> {
-  // Remove dependency edges involving this task
-  await db.dependencyEdges
-    .filter((e) => e.fromTaskId === id || e.toTaskId === id)
-    .delete();
+  // Remove dependency edges involving this task. Use the fromTaskId /
+  // toTaskId indexes instead of a full-table filter — see #11.
+  await Promise.all([
+    db.dependencyEdges.where('fromTaskId').equals(id).delete(),
+    db.dependencyEdges.where('toTaskId').equals(id).delete(),
+  ]);
   await db.tasks.update(id, { deletedAt: Date.now() });
   return ok(undefined);
 }
@@ -192,11 +194,13 @@ export async function moveTaskToProject(
   const task = await db.tasks.get(taskId);
   if (!task) return err('Task not found');
 
-  // Remove dependency edges when moving out of a project (PRD §4.3)
+  // Remove dependency edges when moving out of a project (PRD §4.3).
+  // Indexed lookups per #11.
   if (task.projectId && task.projectId !== projectId) {
-    await db.dependencyEdges
-      .filter((e) => e.fromTaskId === taskId || e.toTaskId === taskId)
-      .delete();
+    await Promise.all([
+      db.dependencyEdges.where('fromTaskId').equals(taskId).delete(),
+      db.dependencyEdges.where('toTaskId').equals(taskId).delete(),
+    ]);
   }
 
   await db.tasks.update(taskId, { projectId, areaId: null });
@@ -234,7 +238,7 @@ export async function getTodayTasks(): Promise<Task[]> {
     .sortBy('sortOrder');
 
   // Filter out blocked tasks
-  const blocked = await getAllBlockedTaskIds();
+  const blocked = await getAllBlockedTaskIds(projectIdsOf(tasks));
   return tasks.filter((t) => !blocked.has(t.id));
 }
 
@@ -255,7 +259,7 @@ export async function getAnytimeTasks(): Promise<Task[]> {
     .sortBy('sortOrder');
 
   // Filter out blocked tasks
-  const blocked = await getAllBlockedTaskIds();
+  const blocked = await getAllBlockedTaskIds(projectIdsOf(tasks));
   return tasks.filter((t) => !blocked.has(t.id));
 }
 
@@ -312,17 +316,43 @@ export async function getTrashTasks(): Promise<Task[]> {
 
 // ── Blocked task helper ────────────────────────────────────────────
 
-/** Returns IDs of all tasks that are blocked by at least one incomplete predecessor */
-async function getAllBlockedTaskIds(): Promise<Set<string>> {
-  const allEdges = await db.dependencyEdges.toArray();
-  if (allEdges.length === 0) return new Set();
+/**
+ * Returns IDs of all tasks that are blocked by at least one incomplete
+ * predecessor. Scoped to the given projectIds so Today/Anytime views don't
+ * read every edge in the database (#11). Dependencies are project-scoped
+ * per PRD §4.3, so tasks with projectId === null are never blocked.
+ */
+async function getAllBlockedTaskIds(projectIds: string[]): Promise<Set<string>> {
+  if (projectIds.length === 0) return new Set();
 
-  const completedTasks = await db.tasks
-    .filter((t) => t.status === 'completed' || t.status === 'canceled')
+  const edges = await db.dependencyEdges
+    .where('projectId')
+    .anyOf(projectIds)
     .toArray();
-  const completedIds = new Set(completedTasks.map((t) => t.id));
+  if (edges.length === 0) return new Set();
 
-  return getBlockedTaskIds(allEdges, completedIds);
+  // Only fetch the task rows referenced by these edges, not every task.
+  const taskIds = new Set<string>();
+  for (const e of edges) {
+    taskIds.add(e.fromTaskId);
+    taskIds.add(e.toTaskId);
+  }
+  const referencedTasks = await db.tasks.where('id').anyOf([...taskIds]).toArray();
+  const completedIds = new Set(
+    referencedTasks
+      .filter((t) => t.status === 'completed' || t.status === 'canceled')
+      .map((t) => t.id)
+  );
+
+  return getBlockedTaskIds(edges, completedIds);
+}
+
+function projectIdsOf(tasks: Task[]): string[] {
+  const ids = new Set<string>();
+  for (const t of tasks) {
+    if (t.projectId) ids.add(t.projectId);
+  }
+  return [...ids];
 }
 
 // ── Checklist Items ────────────────────────────────────────────────
@@ -387,9 +417,11 @@ export async function addDependency(
     return err('Both tasks must be in the same project');
   }
 
-  // Check for duplicate
+  // Check for duplicate via indexed lookup (#11).
   const existing = await db.dependencyEdges
-    .filter((e) => e.fromTaskId === fromTaskId && e.toTaskId === toTaskId)
+    .where('fromTaskId')
+    .equals(fromTaskId)
+    .and((e) => e.toTaskId === toTaskId)
     .first();
   if (existing) return err('Dependency already exists');
 
@@ -422,8 +454,11 @@ export async function removeDependencyByTasks(
   fromTaskId: string,
   toTaskId: string
 ): Promise<Result<void>> {
+  // Indexed lookup on fromTaskId, then narrow by toTaskId (#11).
   await db.dependencyEdges
-    .filter((e) => e.fromTaskId === fromTaskId && e.toTaskId === toTaskId)
+    .where('fromTaskId')
+    .equals(fromTaskId)
+    .and((e) => e.toTaskId === toTaskId)
     .delete();
   return ok(undefined);
 }
@@ -433,9 +468,12 @@ export async function getDependencyEdges(projectId: string): Promise<DependencyE
 }
 
 export async function getTaskDependencies(taskId: string): Promise<DependencyEdge[]> {
-  return db.dependencyEdges
-    .filter((e) => e.fromTaskId === taskId || e.toTaskId === taskId)
-    .toArray();
+  // Union the two indexed lookups instead of scanning the whole table (#11).
+  const [outgoing, incoming] = await Promise.all([
+    db.dependencyEdges.where('fromTaskId').equals(taskId).toArray(),
+    db.dependencyEdges.where('toTaskId').equals(taskId).toArray(),
+  ]);
+  return [...outgoing, ...incoming];
 }
 
 // ── Trash cleanup ──────────────────────────────────────────────────

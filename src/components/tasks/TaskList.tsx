@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useUiStore, type SidebarView } from '../../store/uiStore';
 import { useTaskStore } from '../../store/taskStore';
 import { useViewTasks } from '../../hooks/useViewTasks';
-import { getDependencyEdges } from '../../db/operations';
 import { topologicalSort } from '../../db/graph';
-import type { DependencyEdge, Task } from '../../types';
+import type { Task } from '../../types';
 import TaskRow from './TaskRow';
 import LinkModeToolbar from '../dependencies/LinkModeToolbar';
 import GraphView from '../projects/GraphView';
@@ -50,23 +49,13 @@ function emptyMessage(view: SidebarView): string {
 
 export default function TaskList() {
   const { sidebarView, linkMode, enterLinkMode } = useUiStore();
-  const { projects, areas, createNewTask } = useTaskStore();
+  const { projects, areas, createNewTask, edges } = useTaskStore();
   const tasks = useViewTasks();
   const [showSaveTemplate, setShowSaveTemplate] = useState(false);
 
-  // Load dependency edges for project views to show blocked indicators
-  const [edges, setEdges] = useState<DependencyEdge[]>([]);
   const projectId = typeof sidebarView === 'object' && sidebarView.type === 'project'
     ? sidebarView.projectId
     : null;
-
-  useEffect(() => {
-    if (projectId) {
-      getDependencyEdges(projectId).then(setEdges);
-    } else {
-      setEdges([]);
-    }
-  }, [projectId, tasks]); // re-fetch edges when tasks change
 
   // For project views, order tasks topologically so the list matches the
   // left-to-right ordering of the dependency graph above. Kahn's algorithm

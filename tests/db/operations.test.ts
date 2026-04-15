@@ -27,6 +27,7 @@ import {
   removeDependency,
   removeDependencyByTasks,
   getDependencyEdges,
+  getTaskDependencies,
 } from '../../src/db/operations';
 
 beforeEach(async () => {
@@ -368,6 +369,39 @@ describe('Dependencies', () => {
 
     const edges = await getDependencyEdges(project!.id);
     expect(edges).toHaveLength(0);
+  });
+
+  it('softDeleteTask removes both outgoing and incoming edges (indexed path)', async () => {
+    const { data: project } = await createProject('P1');
+    const { data: t1 } = await createTask('T1', { projectId: project!.id });
+    const { data: t2 } = await createTask('T2', { projectId: project!.id });
+    const { data: t3 } = await createTask('T3', { projectId: project!.id });
+
+    // t2 has one outgoing edge (t2 -> t3) and one incoming edge (t1 -> t2)
+    await addDependency(t1!.id, t2!.id, project!.id);
+    await addDependency(t2!.id, t3!.id, project!.id);
+
+    await softDeleteTask(t2!.id);
+
+    const edges = await getDependencyEdges(project!.id);
+    expect(edges).toHaveLength(0);
+  });
+
+  it('getTaskDependencies returns edges in both directions', async () => {
+    const { data: project } = await createProject('P1');
+    const { data: t1 } = await createTask('T1', { projectId: project!.id });
+    const { data: t2 } = await createTask('T2', { projectId: project!.id });
+    const { data: t3 } = await createTask('T3', { projectId: project!.id });
+
+    await addDependency(t1!.id, t2!.id, project!.id); // t2 incoming
+    await addDependency(t2!.id, t3!.id, project!.id); // t2 outgoing
+
+    const deps = await getTaskDependencies(t2!.id);
+    expect(deps).toHaveLength(2);
+    const pairs = deps.map((e) => `${e.fromTaskId}->${e.toTaskId}`).sort();
+    expect(pairs).toEqual(
+      [`${t1!.id}->${t2!.id}`, `${t2!.id}->${t3!.id}`].sort()
+    );
   });
 
   it('rejects three-node cycle', async () => {
