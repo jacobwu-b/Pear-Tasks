@@ -3,6 +3,7 @@ import { useUiStore, type SidebarView } from '../../store/uiStore';
 import { useTaskStore } from '../../store/taskStore';
 import { useViewTasks } from '../../hooks/useViewTasks';
 import { getDependencyEdges } from '../../db/operations';
+import { topologicalSort } from '../../db/graph';
 import type { DependencyEdge, Task } from '../../types';
 import TaskRow from './TaskRow';
 import LinkModeToolbar from '../dependencies/LinkModeToolbar';
@@ -66,6 +67,18 @@ export default function TaskList() {
       setEdges([]);
     }
   }, [projectId, tasks]); // re-fetch edges when tasks change
+
+  // For project views, order tasks topologically so the list matches the
+  // left-to-right ordering of the dependency graph above. Kahn's algorithm
+  // preserves original (sortOrder) order among tasks with no dependency
+  // relationships, so unconnected tasks stay in their existing positions.
+  const orderedTasks = useMemo(() => {
+    if (!projectId || edges.length === 0) return tasks;
+    const ids = tasks.map((t) => t.id);
+    const sortedIds = topologicalSort(ids, edges);
+    const byId = new Map(tasks.map((t) => [t.id, t] as const));
+    return sortedIds.map((id) => byId.get(id)!).filter(Boolean);
+  }, [tasks, edges, projectId]);
 
   // Compute blocked counts per task
   const blockedCounts = useMemo(() => {
@@ -209,7 +222,7 @@ export default function TaskList() {
 
       {/* Dependency graph panel — shown on top for project views with edges */}
       {projectId && (
-        <GraphView tasks={tasks} edges={edges} />
+        <GraphView tasks={orderedTasks} edges={edges} />
       )}
 
       {/* Task list */}
@@ -241,7 +254,7 @@ export default function TaskList() {
             </div>
           ))
         ) : (
-          tasks.map((task) => (
+          orderedTasks.map((task) => (
             <TaskRow key={task.id} task={task} blockedByCount={blockedCounts.get(task.id) ?? 0} />
           ))
         )}

@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Area, Project, Task, ChecklistItem, DependencyEdge, ProjectTemplate, TemplateTask, TemplateEdge } from '../types';
+import type { Area, Project, Task, ChecklistItem, DependencyEdge, ProjectTemplate } from '../types';
 import type { SidebarView } from './uiStore';
 import {
   getTemplates as dbGetTemplates,

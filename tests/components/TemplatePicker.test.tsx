@@ -2,7 +2,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, act, cleanup } from '@testing-library/react';
 import { createProject, createTask, addDependency } from '../../src/db/operations';
-import { saveAsTemplate, getTemplates, getTemplate } from '../../src/db/templates';
+import { saveAsTemplate, getTemplate } from '../../src/db/templates';
 import TemplateEditor from '../../src/components/templates/TemplateEditor';
 import { seedBuiltInTemplates } from '../../src/db/templates';
 import { useUiStore } from '../../src/store/uiStore';
