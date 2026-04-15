@@ -35,12 +35,15 @@ import {
   addDependency as dbAddDependency,
   removeDependencyByTasks as dbRemoveDependencyByTasks,
   getTaskDependencies as dbGetTaskDependencies,
+  getDependencyEdges as dbGetDependencyEdges,
 } from '../db/operations';
 
 interface TaskState {
   areas: Area[];
   projects: Project[];
   tasks: Task[];
+  /** Dependency edges for the currently loaded project view. Empty for non-project views. */
+  edges: DependencyEdge[];
   /** Currently loaded view (to know when to reload) */
   currentView: SidebarView | null;
 
@@ -100,10 +103,18 @@ async function fetchTasksForView(view: SidebarView): Promise<Task[]> {
   return [];
 }
 
+async function fetchEdgesForView(view: SidebarView): Promise<DependencyEdge[]> {
+  if (typeof view === 'object' && view.type === 'project') {
+    return dbGetDependencyEdges(view.projectId);
+  }
+  return [];
+}
+
 export const useTaskStore = create<TaskState>((set, get) => ({
   areas: [],
   projects: [],
   tasks: [],
+  edges: [],
   currentView: null,
 
   loadSidebarData: async () => {
@@ -112,15 +123,21 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   },
 
   loadTasksForView: async (view) => {
-    const tasks = await fetchTasksForView(view);
-    set({ tasks, currentView: view });
+    const [tasks, edges] = await Promise.all([
+      fetchTasksForView(view),
+      fetchEdgesForView(view),
+    ]);
+    set({ tasks, edges, currentView: view });
   },
 
   refreshTasks: async () => {
     const { currentView } = get();
     if (!currentView) return;
-    const tasks = await fetchTasksForView(currentView);
-    set({ tasks });
+    const [tasks, edges] = await Promise.all([
+      fetchTasksForView(currentView),
+      fetchEdgesForView(currentView),
+    ]);
+    set({ tasks, edges });
   },
 
   completeTask: async (id) => {

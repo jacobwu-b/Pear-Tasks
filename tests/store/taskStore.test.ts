@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { db } from '../../src/db/schema';
-import { createArea, createProject, createTask, updateTask } from '../../src/db/operations';
+import { addDependency, createArea, createProject, createTask, updateTask } from '../../src/db/operations';
 import { useTaskStore } from '../../src/store/taskStore';
 
 beforeEach(async () => {
   await db.delete();
   await db.open();
-  useTaskStore.setState({ areas: [], projects: [], tasks: [], currentView: null });
+  useTaskStore.setState({ areas: [], projects: [], tasks: [], edges: [], currentView: null });
 });
 
 describe('taskStore', () => {
@@ -132,6 +132,48 @@ describe('taskStore', () => {
     // Should leave logbook after reopening
     const { tasks } = useTaskStore.getState();
     expect(tasks).toHaveLength(0);
+  });
+
+  // -- Edges (store-owned dependency edges) --
+
+  it('loadTasksForView populates edges for a project view', async () => {
+    const { data: project } = await createProject('P1');
+    const { data: t1 } = await createTask('T1', { projectId: project!.id });
+    const { data: t2 } = await createTask('T2', { projectId: project!.id });
+    await addDependency(t1!.id, t2!.id, project!.id);
+
+    await useTaskStore.getState().loadTasksForView({ type: 'project', projectId: project!.id });
+
+    const { edges } = useTaskStore.getState();
+    expect(edges).toHaveLength(1);
+    expect(edges[0].fromTaskId).toBe(t1!.id);
+    expect(edges[0].toTaskId).toBe(t2!.id);
+  });
+
+  it('loadTasksForView clears edges for non-project views', async () => {
+    const { data: project } = await createProject('P1');
+    const { data: t1 } = await createTask('T1', { projectId: project!.id });
+    const { data: t2 } = await createTask('T2', { projectId: project!.id });
+    await addDependency(t1!.id, t2!.id, project!.id);
+
+    // Seed edges from a project view, then switch to Inbox
+    await useTaskStore.getState().loadTasksForView({ type: 'project', projectId: project!.id });
+    expect(useTaskStore.getState().edges).toHaveLength(1);
+
+    await useTaskStore.getState().loadTasksForView('inbox');
+    expect(useTaskStore.getState().edges).toEqual([]);
+  });
+
+  it('refreshTasks keeps edges in sync after dependency mutations', async () => {
+    const { data: project } = await createProject('P1');
+    const { data: t1 } = await createTask('T1', { projectId: project!.id });
+    const { data: t2 } = await createTask('T2', { projectId: project!.id });
+    await useTaskStore.getState().loadTasksForView({ type: 'project', projectId: project!.id });
+    expect(useTaskStore.getState().edges).toHaveLength(0);
+
+    await useTaskStore.getState().addDependency(t1!.id, t2!.id, project!.id);
+
+    expect(useTaskStore.getState().edges).toHaveLength(1);
   });
 
   it('deleteTask soft-deletes and refreshes', async () => {
