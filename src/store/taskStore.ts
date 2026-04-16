@@ -222,6 +222,13 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   },
 
   completeTask: async (id) => {
+    // Enforce the invariant: blocked tasks cannot be completed until all
+    // predecessors are done (completed or canceled).
+    const deps = await resolveDepsForTask(id);
+    const isBlocked = deps.some(
+      (d) => d.direction === 'blockedBy' && d.task.status !== 'completed' && d.task.status !== 'canceled'
+    );
+    if (isBlocked) return;
     await dbUpdateTask(id, { status: 'completed', completedAt: Date.now() });
     await get().refreshTasks();
   },
