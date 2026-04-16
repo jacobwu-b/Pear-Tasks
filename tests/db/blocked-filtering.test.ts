@@ -7,6 +7,7 @@ import {
   getTodayTasks,
   getAnytimeTasks,
 } from '../../src/db/operations';
+import { getLocalTodayDateString } from '../../src/lib/dates';
 import { clearDatabase } from '../helpers';
 
 beforeEach(async () => {
@@ -15,7 +16,7 @@ beforeEach(async () => {
 
 describe('blocked task filtering', () => {
   it('excludes blocked tasks from Today view', async () => {
-    const today = new Date().toISOString().split('T')[0];
+    const today = getLocalTodayDateString();
     const { data: project } = await createProject('P');
     const { data: blocker } = await createTask('Blocker', { projectId: project!.id, when: today });
     const { data: blocked } = await createTask('Blocked', { projectId: project!.id, when: today });
@@ -29,7 +30,7 @@ describe('blocked task filtering', () => {
   });
 
   it('includes unblocked tasks in Today view after dependency resolved', async () => {
-    const today = new Date().toISOString().split('T')[0];
+    const today = getLocalTodayDateString();
     const { data: project } = await createProject('P');
     const { data: blocker } = await createTask('Blocker', { projectId: project!.id, when: today });
     const { data: blocked } = await createTask('Blocked', { projectId: project!.id, when: today });
@@ -63,7 +64,7 @@ describe('blocked task filtering', () => {
     // edges to the projects visible in the view rather than scanning the
     // whole dependencyEdges table. Verify blocking still works across
     // projects and that unrelated-project edges do not leak in.
-    const today = new Date().toISOString().split('T')[0];
+    const today = getLocalTodayDateString();
     const { data: pA } = await createProject('A');
     const { data: pB } = await createProject('B');
     const { data: pC } = await createProject('C');
@@ -94,7 +95,7 @@ describe('blocked task filtering', () => {
   });
 
   it('does not filter tasks without dependencies', async () => {
-    const today = new Date().toISOString().split('T')[0];
+    const today = getLocalTodayDateString();
     await createTask('Regular task', { when: today });
 
     const todayTasks = await getTodayTasks();

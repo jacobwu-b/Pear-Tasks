@@ -3,6 +3,7 @@ import { useUiStore, type SidebarView } from '../../store/uiStore';
 import { useTaskStore } from '../../store/taskStore';
 import { useViewTasks } from '../../hooks/useViewTasks';
 import { topologicalSort } from '../../db/graph';
+import { getLocalTodayDateString, getLocalTomorrowDateString } from '../../lib/dates';
 import type { Task } from '../../types';
 import TaskRow from './TaskRow';
 import LinkModeToolbar from '../dependencies/LinkModeToolbar';
@@ -111,7 +112,7 @@ export default function TaskList() {
       options.projectId = sidebarView.projectId;
     }
     if (sidebarView === 'today') {
-      options.when = new Date().toISOString().split('T')[0];
+      options.when = getLocalTodayDateString();
     }
     if (sidebarView === 'someday') {
       options.when = 'someday';
@@ -256,11 +257,9 @@ export default function TaskList() {
 
 function formatGroupDate(date: string): string {
   if (date === 'Unscheduled') return date;
-  const today = new Date().toISOString().split('T')[0];
+  const today = getLocalTodayDateString();
   if (date === today) return 'Today';
-  const tomorrow = new Date();
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  if (date === tomorrow.toISOString().split('T')[0]) return 'Tomorrow';
+  if (date === getLocalTomorrowDateString()) return 'Tomorrow';
   const d = new Date(date + 'T00:00:00');
   return d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
 }

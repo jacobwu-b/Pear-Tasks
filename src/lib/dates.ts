@@ -5,11 +5,21 @@ import type { WhenValue } from '../types';
  * Format a Date as YYYY-MM-DD in local time (not UTC). We want
  * "today" at 11pm PST to still resolve to today's calendar date.
  */
-function toLocalDateString(date: Date): string {
+export function toLocalDateString(date: Date): string {
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, '0');
   const d = String(date.getDate()).padStart(2, '0');
   return `${y}-${m}-${d}`;
+}
+
+export function getLocalTodayDateString(now: Date = new Date()): string {
+  return toLocalDateString(now);
+}
+
+export function getLocalTomorrowDateString(now: Date = new Date()): string {
+  const tomorrow = new Date(now);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  return toLocalDateString(tomorrow);
 }
 
 /**
