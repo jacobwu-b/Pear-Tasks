@@ -1,5 +1,6 @@
 import { db } from './schema';
 import { wouldCreateCycle, getBlockedTaskIds } from './graph';
+import { getLocalTodayDateString } from '../lib/dates';
 import type {
   Area,
   Project,
@@ -227,7 +228,7 @@ export async function getInboxTasks(): Promise<Task[]> {
 }
 
 export async function getTodayTasks(): Promise<Task[]> {
-  const today = new Date().toISOString().split('T')[0];
+  const today = getLocalTodayDateString();
   const tasks = await db.tasks
     .filter(
       (t) =>
@@ -275,7 +276,7 @@ export async function getSomedayTasks(): Promise<Task[]> {
 }
 
 export async function getUpcomingTasks(): Promise<Task[]> {
-  const today = new Date().toISOString().split('T')[0];
+  const today = getLocalTodayDateString();
   const tasks = await db.tasks
     .filter(
       (t) =>

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { Task } from '../../types';
 import { useTaskStore } from '../../store/taskStore';
 import { useUiStore } from '../../store/uiStore';
+import { getLocalTodayDateString, getLocalTomorrowDateString } from '../../lib/dates';
 
 interface TaskRowProps {
   task: Task;
@@ -67,7 +68,7 @@ export default function TaskRow({ task, blockedByCount = 0 }: TaskRowProps) {
   };
 
   const deadlineDisplay = task.deadline ? formatDeadline(task.deadline) : null;
-  const isOverdue = task.deadline ? task.deadline < new Date().toISOString().split('T')[0] : false;
+  const isOverdue = task.deadline ? task.deadline < getLocalTodayDateString() : false;
 
   const bgColor = isLinkFirst
     ? 'var(--color-accent-subtle)'
@@ -196,12 +197,9 @@ export default function TaskRow({ task, blockedByCount = 0 }: TaskRowProps) {
 }
 
 function formatDeadline(date: string): string {
-  const today = new Date().toISOString().split('T')[0];
+  const today = getLocalTodayDateString();
   if (date === today) return 'Today';
-
-  const tomorrow = new Date();
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  if (date === tomorrow.toISOString().split('T')[0]) return 'Tomorrow';
+  if (date === getLocalTomorrowDateString()) return 'Tomorrow';
 
   const d = new Date(date + 'T00:00:00');
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
