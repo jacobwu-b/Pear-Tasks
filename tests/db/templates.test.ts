@@ -272,6 +272,41 @@ describe('instantiateTemplate', () => {
     const result = await instantiateTemplate('non-existent', 'Project', null);
     expect(result.error).toBe('Template not found');
   });
+
+  it('leaves no partial project behind when a write fails mid-instantiation', async () => {
+    // Build a template whose edge references a tempId that won't resolve,
+    // causing addDependency to receive an undefined fromId. We force a
+    // guaranteed failure by giving the template a self-referencing edge
+    // (fromTempId === toTempId), which wouldCreateCycle will reject.
+    const selfLoopTemplate = await db.templates.add({
+      id: 'test-self-loop',
+      name: 'Self Loop',
+      builtIn: false,
+      tasks: [
+        { tempId: 'a', title: 'Task A', checklistTitles: [] },
+      ],
+      edges: [
+        // addDependency validates fromTaskId !== toTaskId via cycle detection
+        { fromTempId: 'a', toTempId: 'a' },
+      ],
+    });
+    expect(selfLoopTemplate).toBeDefined();
+
+    const projectsBefore = await db.projects.count();
+    const result = await instantiateTemplate('test-self-loop', 'Partial Project', null);
+
+    expect(result.error).not.toBeNull();
+
+    // Transaction must have rolled back — no new project in the DB
+    const projectsAfter = await db.projects.count();
+    expect(projectsAfter).toBe(projectsBefore);
+
+    // No tasks, checklist items, or edges should have leaked either
+    const tasks = await db.tasks.toArray();
+    expect(tasks.length).toBe(0);
+    const edges = await db.dependencyEdges.toArray();
+    expect(edges.length).toBe(0);
+  });
 });
 
 // ── Save as Template ──────────────────────────────────────────────
