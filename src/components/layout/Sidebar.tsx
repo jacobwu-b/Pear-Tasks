@@ -400,6 +400,7 @@ function AreaGroup({
                   }}
                   data-testid={`sidebar-area-rename-btn-${area.id}`}
                   title="Rename area"
+                  aria-label="Rename area"
                   className="p-1 rounded cursor-pointer"
                   style={{ color: 'var(--color-text-tertiary)' }}
                 >
@@ -414,6 +415,7 @@ function AreaGroup({
                   }}
                   data-testid={`sidebar-area-delete-btn-${area.id}`}
                   title="Delete area"
+                  aria-label="Delete area"
                   className="p-1 rounded cursor-pointer"
                   style={{ color: 'var(--color-text-tertiary)' }}
                 >

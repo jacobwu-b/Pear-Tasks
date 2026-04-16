@@ -118,6 +118,7 @@ export default function TaskDetail() {
         <button
           onClick={() => setSelectedTaskId(null)}
           data-testid="close-detail"
+          aria-label="Close detail panel"
           className="p-1 rounded-md transition-colors cursor-pointer"
           style={{ color: 'var(--color-text-tertiary)' }}
           onMouseEnter={(e) => {
@@ -292,6 +293,7 @@ export default function TaskDetail() {
         <button
           onClick={handleDelete}
           data-testid="task-delete-btn"
+          aria-label="Move to trash"
           className="p-1.5 rounded-md transition-colors cursor-pointer"
           style={{ color: 'var(--color-text-tertiary)' }}
           onMouseEnter={(e) => {
