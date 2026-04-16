@@ -1,43 +1,85 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import AppShell from './components/layout/AppShell'
 import QuickCapture from './components/tasks/QuickCapture'
 import NewTaskForm from './components/tasks/NewTaskForm'
+import ShortcutHelp from './components/common/ShortcutHelp'
 import { seedOnFirstLaunch } from './db/seed'
 import { seedBuiltInTemplates } from './db/templates'
 import { useUiStore } from './store/uiStore'
+import { useTaskStore } from './store/taskStore'
+import { useGlobalShortcuts } from './lib/keyboard'
 
 function App() {
   const [ready, setReady] = useState(false)
+  const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false)
+
   const quickCaptureOpen = useUiStore((s) => s.quickCaptureOpen)
   const newTaskFormOpen = useUiStore((s) => s.newTaskFormOpen)
   const openQuickCapture = useUiStore((s) => s.openQuickCapture)
   const closeQuickCapture = useUiStore((s) => s.closeQuickCapture)
   const openNewTaskForm = useUiStore((s) => s.openNewTaskForm)
   const closeNewTaskForm = useUiStore((s) => s.closeNewTaskForm)
+  const toggleSidebar = useUiStore((s) => s.toggleSidebar)
+  const selectedTaskId = useUiStore((s) => s.selectedTaskId)
+  const setSelectedTaskId = useUiStore((s) => s.setSelectedTaskId)
+  const sidebarView = useUiStore((s) => s.sidebarView)
+  const graphCollapsed = useUiStore((s) => s.graphCollapsed)
+  const setGraphCollapsed = useUiStore((s) => s.setGraphCollapsed)
+
+  const completeTask = useTaskStore((s) => s.completeTask)
+  const deleteTask = useTaskStore((s) => s.deleteTask)
+  const updateTaskField = useTaskStore((s) => s.updateTaskField)
 
   useEffect(() => {
     Promise.all([seedOnFirstLaunch(), seedBuiltInTemplates()]).then(() => setReady(true))
   }, [])
 
-  // Global capture shortcuts. Both require Cmd/Ctrl so they don't conflict
-  // with typing in any input — if a modifier is held with Enter, the user
-  // is signaling intent regardless of focus. The full-form shortcut also
-  // requires Shift. Shift+Cmd+Enter → full form; Cmd+Enter → quick capture.
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      const mod = e.metaKey || e.ctrlKey
-      if (!mod) return
-      if (e.key !== 'Enter') return
-      // Don't re-open if a modal is already open.
-      const state = useUiStore.getState()
-      if (state.quickCaptureOpen || state.newTaskFormOpen) return
-      e.preventDefault()
-      if (e.shiftKey) openNewTaskForm()
-      else openQuickCapture()
+  const isProjectView = typeof sidebarView === 'object' && sidebarView.type === 'project'
+  const anyModalOpen = quickCaptureOpen || newTaskFormOpen || shortcutHelpOpen
+
+  const handlers = useMemo(() => {
+    const today = new Date()
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+
+    return {
+      quickCapture: () => {
+        if (!anyModalOpen) openQuickCapture()
+      },
+      newTaskForm: () => {
+        if (!anyModalOpen) openNewTaskForm()
+      },
+      completeTask: () => {
+        if (selectedTaskId && !anyModalOpen) completeTask(selectedTaskId)
+      },
+      deleteTask: () => {
+        if (selectedTaskId && !anyModalOpen) {
+          deleteTask(selectedTaskId)
+          setSelectedTaskId(null)
+        }
+      },
+      moveToToday: () => {
+        if (selectedTaskId && !anyModalOpen) updateTaskField(selectedTaskId, { when: todayStr })
+      },
+      moveToSomeday: () => {
+        if (selectedTaskId && !anyModalOpen) updateTaskField(selectedTaskId, { when: 'someday' })
+      },
+      toggleSidebar: () => {
+        if (!anyModalOpen) toggleSidebar()
+      },
+      toggleGraph: () => {
+        if (isProjectView && !anyModalOpen) setGraphCollapsed(!graphCollapsed)
+      },
+      showHelp: () => {
+        if (!anyModalOpen) setShortcutHelpOpen(true)
+      },
     }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  }, [openQuickCapture, openNewTaskForm])
+  }, [
+    anyModalOpen, selectedTaskId, isProjectView, graphCollapsed,
+    openQuickCapture, openNewTaskForm, completeTask, deleteTask,
+    setSelectedTaskId, updateTaskField, toggleSidebar, setGraphCollapsed,
+  ])
+
+  useGlobalShortcuts(handlers)
 
   if (!ready) return null
 
@@ -46,6 +88,7 @@ function App() {
       <AppShell />
       <QuickCapture open={quickCaptureOpen} onClose={closeQuickCapture} />
       <NewTaskForm open={newTaskFormOpen} onClose={closeNewTaskForm} />
+      <ShortcutHelp open={shortcutHelpOpen} onClose={() => setShortcutHelpOpen(false)} />
     </>
   )
 }
