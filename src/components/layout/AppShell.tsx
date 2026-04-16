@@ -5,58 +5,95 @@ import TaskList from '../tasks/TaskList';
 import TaskDetail from '../tasks/TaskDetail';
 import TemplatePicker from '../templates/TemplatePicker';
 
-const MOBILE_BREAKPOINT = 640;
+type Breakpoint = 'mobile' | 'tablet' | 'desktop';
 
-function useIsMobile() {
-  const [isMobile, setIsMobile] = useState(
-    typeof window !== 'undefined' ? window.innerWidth < MOBILE_BREAKPOINT : false
-  );
+const MOBILE_MAX = 639;
+const TABLET_MAX = 1023;
+
+function useBreakpoint(): Breakpoint {
+  const [bp, setBp] = useState<Breakpoint>(() => {
+    if (typeof window === 'undefined') return 'desktop';
+    const w = window.innerWidth;
+    if (w <= MOBILE_MAX) return 'mobile';
+    if (w <= TABLET_MAX) return 'tablet';
+    return 'desktop';
+  });
 
   useEffect(() => {
-    const mq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT - 1}px)`);
-    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
-    mq.addEventListener('change', handler);
-    return () => mq.removeEventListener('change', handler);
+    const mobileMq = window.matchMedia(`(max-width: ${MOBILE_MAX}px)`);
+    const tabletMq = window.matchMedia(`(min-width: ${MOBILE_MAX + 1}px) and (max-width: ${TABLET_MAX}px)`);
+
+    const update = () => {
+      if (mobileMq.matches) setBp('mobile');
+      else if (tabletMq.matches) setBp('tablet');
+      else setBp('desktop');
+    };
+
+    mobileMq.addEventListener('change', update);
+    tabletMq.addEventListener('change', update);
+    return () => {
+      mobileMq.removeEventListener('change', update);
+      tabletMq.removeEventListener('change', update);
+    };
   }, []);
 
-  return isMobile;
+  return bp;
 }
 
-export default function AppShell() {
+interface AppShellProps {
+  onDataManagement?: () => void;
+}
+
+export default function AppShell({ onDataManagement }: AppShellProps = {}) {
   const {
     sidebarCollapsed,
     mobileSidebarOpen,
     selectedTaskId,
     toggleSidebar,
     setMobileSidebarOpen,
+    setSelectedTaskId,
   } = useUiStore();
 
-  const isMobile = useIsMobile();
+  const bp = useBreakpoint();
+  const isCompact = bp === 'mobile' || bp === 'tablet';
   const [showTemplatePicker, setShowTemplatePicker] = useState(false);
 
   const handleNewProject = useCallback(() => {
     setShowTemplatePicker(true);
-    if (isMobile) setMobileSidebarOpen(false);
-  }, [isMobile, setMobileSidebarOpen]);
+    if (isCompact) setMobileSidebarOpen(false);
+  }, [isCompact, setMobileSidebarOpen]);
 
   const handleHamburgerClick = useCallback(() => {
-    if (isMobile) {
+    if (isCompact) {
       setMobileSidebarOpen(!mobileSidebarOpen);
     } else {
       toggleSidebar();
     }
-  }, [isMobile, mobileSidebarOpen, setMobileSidebarOpen, toggleSidebar]);
+  }, [isCompact, mobileSidebarOpen, setMobileSidebarOpen, toggleSidebar]);
 
-  // Close mobile sidebar when resizing above breakpoint
+  // Close sidebar overlay when resizing to desktop
   useEffect(() => {
-    if (!isMobile && mobileSidebarOpen) {
+    if (!isCompact && mobileSidebarOpen) {
       setMobileSidebarOpen(false);
     }
-  }, [isMobile, mobileSidebarOpen, setMobileSidebarOpen]);
+  }, [isCompact, mobileSidebarOpen, setMobileSidebarOpen]);
 
-  const closeMobileSidebar = useCallback(() => {
+  const closeSidebarOverlay = useCallback(() => {
     setMobileSidebarOpen(false);
   }, [setMobileSidebarOpen]);
+
+  const closeDetailOverlay = useCallback(() => {
+    setSelectedTaskId(null);
+  }, [setSelectedTaskId]);
+
+  // On compact screens, sidebar is always an overlay. On desktop,
+  // it's inline and collapsible via the toggle button.
+  const sidebarIsInline = !isCompact && !sidebarCollapsed;
+  const sidebarIsOverlay = isCompact && mobileSidebarOpen;
+
+  // Detail panel: inline on desktop, slide-over overlay on compact.
+  const detailIsInline = !isCompact && !!selectedTaskId;
+  const detailIsOverlay = isCompact && !!selectedTaskId;
 
   return (
     <div
@@ -68,31 +105,29 @@ export default function AppShell() {
       }}
     >
       {/* Desktop sidebar — inline */}
-      {!isMobile && !sidebarCollapsed && (
+      {sidebarIsInline && (
         <div
           className="shrink-0 h-full"
           style={{ width: 'var(--sidebar-width)' }}
         >
-          <Sidebar onNewProject={handleNewProject} />
+          <Sidebar onNewProject={handleNewProject} onDataManagement={onDataManagement} />
         </div>
       )}
 
-      {/* Mobile sidebar — slide-over overlay */}
-      {isMobile && mobileSidebarOpen && (
+      {/* Mobile/tablet sidebar — slide-over overlay */}
+      {sidebarIsOverlay && (
         <>
-          {/* Backdrop */}
           <div
             data-testid="sidebar-backdrop"
             className="fixed inset-0 z-40 transition-opacity"
             style={{ backgroundColor: 'rgba(0, 0, 0, 0.4)' }}
-            onClick={closeMobileSidebar}
+            onClick={closeSidebarOverlay}
           />
-          {/* Sidebar drawer */}
           <div
             className="fixed inset-y-0 left-0 z-50 h-full shadow-lg"
             style={{ width: 'var(--sidebar-width)' }}
           >
-            <Sidebar onNavigate={closeMobileSidebar} onNewProject={handleNewProject} />
+            <Sidebar onNavigate={closeSidebarOverlay} onNewProject={handleNewProject} onDataManagement={onDataManagement} />
           </div>
         </>
       )}
@@ -107,14 +142,10 @@ export default function AppShell() {
           <button
             onClick={handleHamburgerClick}
             data-testid="toggle-sidebar"
-            className="p-1.5 rounded-md transition-colors cursor-pointer"
+            aria-label="Toggle sidebar"
+            aria-pressed={sidebarIsInline || sidebarIsOverlay}
+            className="p-1.5 rounded-md transition-colors cursor-pointer hover-bg-surface"
             style={{ color: 'var(--color-text-secondary)' }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.backgroundColor = 'var(--color-surface-hover)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.backgroundColor = 'transparent';
-            }}
             title="Toggle sidebar (⌘/)"
           >
             <svg viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5">
@@ -129,10 +160,10 @@ export default function AppShell() {
         </div>
       </div>
 
-      {/* Detail panel — shown when a task is selected, hidden on small screens */}
-      {selectedTaskId && (
+      {/* Detail panel — inline third column on desktop */}
+      {detailIsInline && (
         <div
-          className="shrink-0 h-full hidden lg:block"
+          className="shrink-0 h-full"
           style={{
             width: 'var(--detail-panel-width)',
             borderLeft: '1px solid var(--color-border-primary)',
@@ -140,6 +171,27 @@ export default function AppShell() {
         >
           <TaskDetail />
         </div>
+      )}
+
+      {/* Detail panel — slide-over overlay on mobile/tablet */}
+      {detailIsOverlay && (
+        <>
+          <div
+            data-testid="detail-backdrop"
+            className="fixed inset-0 z-40"
+            style={{ backgroundColor: 'rgba(0, 0, 0, 0.4)' }}
+            onClick={closeDetailOverlay}
+          />
+          <div
+            className="fixed inset-y-0 right-0 z-50 h-full shadow-lg"
+            style={{
+              width: bp === 'mobile' ? '100%' : 'var(--detail-panel-width)',
+              backgroundColor: 'var(--color-surface-secondary)',
+            }}
+          >
+            <TaskDetail />
+          </div>
+        </>
       )}
 
       {/* Template picker modal */}

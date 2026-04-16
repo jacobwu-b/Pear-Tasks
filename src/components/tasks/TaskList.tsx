@@ -140,16 +140,9 @@ export default function TaskList() {
             <button
               onClick={enterLinkMode}
               data-testid="enter-link-mode-btn"
-              className="flex items-center gap-1 px-2.5 py-1 rounded-md text-sm font-medium transition-colors cursor-pointer"
+              className="flex items-center gap-1 px-2.5 py-1 rounded-md text-sm font-medium transition-colors cursor-pointer hover-bg-surface"
               style={{
                 color: 'var(--color-text-secondary)',
-                backgroundColor: 'transparent',
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.backgroundColor = 'var(--color-surface-hover)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.backgroundColor = 'transparent';
               }}
               title="Link dependencies between tasks"
             >

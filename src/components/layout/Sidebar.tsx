@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useUiStore, type SidebarView } from '../../store/uiStore';
 import { useTaskStore } from '../../store/taskStore';
+import { useTheme, type Theme } from '../../hooks/useTheme';
 import AreaDeleteConfirm from './AreaDeleteConfirm';
 
 // ── Icons (simple inline SVGs to avoid dependencies) ───────────────
@@ -110,9 +111,11 @@ interface SidebarProps {
   onNavigate?: () => void;
   /** Called when the user clicks "New Project" to open the template picker */
   onNewProject?: () => void;
+  /** Called when the user clicks "Data" to open export/import */
+  onDataManagement?: () => void;
 }
 
-export default function Sidebar({ onNavigate, onNewProject }: SidebarProps) {
+export default function Sidebar({ onNavigate, onNewProject, onDataManagement }: SidebarProps) {
   const { sidebarView, setSidebarView } = useUiStore();
   const { areas, projects, loadSidebarData, createNewArea, renameArea, removeArea } = useTaskStore();
   const [renamingAreaId, setRenamingAreaId] = useState<string | null>(null);
@@ -189,15 +192,9 @@ export default function Sidebar({ onNavigate, onNewProject }: SidebarProps) {
           <button
             onClick={onNewProject}
             data-testid="sidebar-new-project"
-            className="flex items-center gap-2 w-full px-2.5 py-1.5 rounded-md text-sm font-medium transition-colors cursor-pointer"
+            className="flex items-center gap-2 w-full px-2.5 py-1.5 rounded-md text-sm font-medium transition-colors cursor-pointer hover-bg-surface"
             style={{
               color: 'var(--color-accent)',
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.backgroundColor = 'var(--color-surface-hover)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.backgroundColor = 'transparent';
             }}
           >
             <svg viewBox="0 0 16 16" fill="currentColor" className="w-4 h-4">
@@ -209,15 +206,9 @@ export default function Sidebar({ onNavigate, onNewProject }: SidebarProps) {
         <button
           onClick={handleNewArea}
           data-testid="sidebar-new-area"
-          className="flex items-center gap-2 w-full px-2.5 py-1.5 rounded-md text-sm font-medium transition-colors cursor-pointer"
+          className="flex items-center gap-2 w-full px-2.5 py-1.5 rounded-md text-sm font-medium transition-colors cursor-pointer hover-bg-surface"
           style={{
             color: 'var(--color-accent)',
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.backgroundColor = 'var(--color-surface-hover)';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.backgroundColor = 'transparent';
           }}
         >
           <svg viewBox="0 0 16 16" fill="currentColor" className="w-4 h-4">
@@ -262,6 +253,9 @@ export default function Sidebar({ onNavigate, onNewProject }: SidebarProps) {
             />
           ))}
       </div>
+
+      {/* Footer: theme toggle + data management */}
+      <SidebarFooter onDataManagement={onDataManagement} />
 
       {confirmingArea && (
         <AreaDeleteConfirm
@@ -374,6 +368,7 @@ function AreaGroup({
                   }}
                   data-testid={`sidebar-area-rename-btn-${area.id}`}
                   title="Rename area"
+                  aria-label="Rename area"
                   className="p-1 rounded cursor-pointer"
                   style={{ color: 'var(--color-text-tertiary)' }}
                 >
@@ -388,6 +383,7 @@ function AreaGroup({
                   }}
                   data-testid={`sidebar-area-delete-btn-${area.id}`}
                   title="Delete area"
+                  aria-label="Delete area"
                   className="p-1 rounded cursor-pointer"
                   style={{ color: 'var(--color-text-tertiary)' }}
                 >
@@ -445,5 +441,67 @@ function ProjectItem({
       </span>
       {project.title}
     </button>
+  );
+}
+
+const THEME_LABELS: Record<Theme, string> = {
+  system: 'System',
+  light: 'Light',
+  dark: 'Dark',
+};
+
+function ThemeIcon({ theme }: { theme: Theme }) {
+  if (theme === 'dark') {
+    return (
+      <svg viewBox="0 0 20 20" fill="currentColor" className="w-[18px] h-[18px]">
+        <path fillRule="evenodd" d="M7.455 2.004a.75.75 0 01.26.77 7 7 0 009.958 7.97.75.75 0 011.067.853A8.5 8.5 0 1110.244 1.58a.75.75 0 01-.79.424z" clipRule="evenodd" />
+      </svg>
+    );
+  }
+  if (theme === 'light') {
+    return (
+      <svg viewBox="0 0 20 20" fill="currentColor" className="w-[18px] h-[18px]">
+        <path d="M10 2a.75.75 0 01.75.75v1.5a.75.75 0 01-1.5 0v-1.5A.75.75 0 0110 2zm0 13a.75.75 0 01.75.75v1.5a.75.75 0 01-1.5 0v-1.5A.75.75 0 0110 15zm-8-5a.75.75 0 01.75-.75h1.5a.75.75 0 010 1.5h-1.5A.75.75 0 012 10zm13 0a.75.75 0 01.75-.75h1.5a.75.75 0 010 1.5h-1.5A.75.75 0 0115 10zM4.343 4.343a.75.75 0 011.06 0l1.061 1.06a.75.75 0 01-1.06 1.061l-1.06-1.06a.75.75 0 010-1.06zm9.193 9.193a.75.75 0 011.06 0l1.061 1.06a.75.75 0 01-1.06 1.061l-1.06-1.06a.75.75 0 010-1.061zM4.343 15.657a.75.75 0 010-1.06l1.06-1.061a.75.75 0 011.061 1.06l-1.06 1.06a.75.75 0 01-1.06 0zm9.193-9.193a.75.75 0 010-1.06l1.06-1.061a.75.75 0 111.061 1.06l-1.06 1.06a.75.75 0 01-1.061 0zM10 7a3 3 0 100 6 3 3 0 000-6z" />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 20 20" fill="currentColor" className="w-[18px] h-[18px]">
+      <path fillRule="evenodd" d="M2 4.25A2.25 2.25 0 014.25 2h11.5A2.25 2.25 0 0118 4.25v8.5A2.25 2.25 0 0115.75 15h-3.105a3.501 3.501 0 001.1 1.677A.75.75 0 0113.26 18H6.74a.75.75 0 01-.484-1.323A3.501 3.501 0 007.355 15H4.25A2.25 2.25 0 012 12.75v-8.5zM4.25 3.5a.75.75 0 00-.75.75v8.5c0 .414.336.75.75.75h11.5a.75.75 0 00.75-.75v-8.5a.75.75 0 00-.75-.75H4.25z" clipRule="evenodd" />
+    </svg>
+  );
+}
+
+function SidebarFooter({ onDataManagement }: { onDataManagement?: () => void }) {
+  const { theme, cycle } = useTheme();
+
+  return (
+    <div
+      className="px-2 py-2 mt-auto shrink-0 flex items-center gap-1"
+      style={{ borderTop: '1px solid var(--color-border-primary)' }}
+    >
+      <button
+        onClick={cycle}
+        data-testid="sidebar-theme-btn"
+        aria-label={`Theme: ${THEME_LABELS[theme]}. Click to cycle.`}
+        className="flex items-center gap-2.5 flex-1 px-2.5 py-1.5 rounded-md text-sm transition-colors cursor-pointer hover-bg-surface"
+        style={{ color: 'var(--color-text-tertiary)' }}
+      >
+        <ThemeIcon theme={theme} />
+        {THEME_LABELS[theme]}
+      </button>
+      <button
+        onClick={() => onDataManagement?.()}
+        data-testid="sidebar-data-btn"
+        aria-label="Data management"
+        className="flex items-center gap-2.5 flex-1 px-2.5 py-1.5 rounded-md text-sm transition-colors cursor-pointer hover-bg-surface"
+        style={{ color: 'var(--color-text-tertiary)' }}
+      >
+        <svg viewBox="0 0 20 20" fill="currentColor" className="w-[18px] h-[18px]">
+          <path fillRule="evenodd" d="M7.84 1.804A1 1 0 018.82 1h2.36a1 1 0 01.98.804l.331 1.652a6.993 6.993 0 011.929 1.115l1.598-.54a1 1 0 011.186.447l1.18 2.044a1 1 0 01-.205 1.251l-1.267 1.113a7.047 7.047 0 010 2.228l1.267 1.113a1 1 0 01.206 1.25l-1.18 2.045a1 1 0 01-1.187.447l-1.598-.54a6.993 6.993 0 01-1.929 1.115l-.33 1.652a1 1 0 01-.98.804H8.82a1 1 0 01-.98-.804l-.331-1.652a6.993 6.993 0 01-1.929-1.115l-1.598.54a1 1 0 01-1.186-.447l-1.18-2.044a1 1 0 01.205-1.251l1.267-1.114a7.05 7.05 0 010-2.227L1.821 7.773a1 1 0 01-.206-1.25l1.18-2.045a1 1 0 011.187-.447l1.598.54A6.993 6.993 0 017.51 3.456l.33-1.652zM10 13a3 3 0 100-6 3 3 0 000 6z" clipRule="evenodd" />
+        </svg>
+        Data
+      </button>
+    </div>
   );
 }

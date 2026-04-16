@@ -3,6 +3,8 @@ import AppShell from './components/layout/AppShell'
 import QuickCapture from './components/tasks/QuickCapture'
 import NewTaskForm from './components/tasks/NewTaskForm'
 import ShortcutHelp from './components/common/ShortcutHelp'
+import SearchPalette from './components/common/SearchPalette'
+import DataManagement from './components/common/DataManagement'
 import { seedOnFirstLaunch } from './db/seed'
 import { seedBuiltInTemplates } from './db/templates'
 import { useUiStore } from './store/uiStore'
@@ -12,6 +14,8 @@ import { useGlobalShortcuts } from './lib/keyboard'
 function App() {
   const [ready, setReady] = useState(false)
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false)
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [dataOpen, setDataOpen] = useState(false)
 
   const quickCaptureOpen = useUiStore((s) => s.quickCaptureOpen)
   const newTaskFormOpen = useUiStore((s) => s.newTaskFormOpen)
@@ -35,7 +39,7 @@ function App() {
   }, [])
 
   const isProjectView = typeof sidebarView === 'object' && sidebarView.type === 'project'
-  const anyModalOpen = quickCaptureOpen || newTaskFormOpen || shortcutHelpOpen
+  const anyModalOpen = quickCaptureOpen || newTaskFormOpen || shortcutHelpOpen || searchOpen
 
   const handlers = useMemo(() => {
     const today = new Date()
@@ -69,6 +73,9 @@ function App() {
       toggleGraph: () => {
         if (isProjectView && !anyModalOpen) setGraphCollapsed(!graphCollapsed)
       },
+      search: () => {
+        if (!anyModalOpen) setSearchOpen(true)
+      },
       showHelp: () => {
         if (!anyModalOpen) setShortcutHelpOpen(true)
       },
@@ -85,9 +92,11 @@ function App() {
 
   return (
     <>
-      <AppShell />
+      <AppShell onDataManagement={() => setDataOpen(true)} />
       <QuickCapture open={quickCaptureOpen} onClose={closeQuickCapture} />
       <NewTaskForm open={newTaskFormOpen} onClose={closeNewTaskForm} />
+      <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} />
+      <DataManagement open={dataOpen} onClose={() => setDataOpen(false)} />
       <ShortcutHelp open={shortcutHelpOpen} onClose={() => setShortcutHelpOpen(false)} />
     </>
   )
