@@ -173,12 +173,9 @@ export async function updateTask(
 }
 
 export async function softDeleteTask(id: string): Promise<Result<void>> {
-  // Remove dependency edges involving this task. Use the fromTaskId /
-  // toTaskId indexes instead of a full-table filter — see #11.
-  await Promise.all([
-    db.dependencyEdges.where('fromTaskId').equals(id).delete(),
-    db.dependencyEdges.where('toTaskId').equals(id).delete(),
-  ]);
+  // Edges are intentionally preserved so that restoreTask can bring the full
+  // dependency graph back. Live queries filter out edges involving deleted
+  // tasks. Edges are only hard-deleted when the task is purged from Trash.
   await db.tasks.update(id, { deletedAt: Date.now() });
   return ok(undefined);
 }
@@ -341,7 +338,9 @@ async function getAllBlockedTaskIds(projectIds: string[]): Promise<Set<string>> 
   const referencedTasks = await db.tasks.where('id').anyOf([...taskIds]).toArray();
   const completedIds = new Set(
     referencedTasks
-      .filter((t) => t.status === 'completed' || t.status === 'canceled')
+      // A soft-deleted task can never be "done" in the normal sense, but it
+      // should not keep blocking other tasks — treat it as resolved (#20).
+      .filter((t) => t.status === 'completed' || t.status === 'canceled' || t.deletedAt !== null)
       .map((t) => t.id)
   );
 
@@ -465,7 +464,14 @@ export async function removeDependencyByTasks(
 }
 
 export async function getDependencyEdges(projectId: string): Promise<DependencyEdge[]> {
-  return db.dependencyEdges.where('projectId').equals(projectId).toArray();
+  const edges = await db.dependencyEdges.where('projectId').equals(projectId).toArray();
+  if (edges.length === 0) return edges;
+  // Exclude edges where either endpoint has been soft-deleted. Edges survive
+  // soft-delete so restoreTask can recover the full graph (#20).
+  const deletedIds = new Set(
+    (await db.tasks.where('projectId').equals(projectId).filter((t) => t.deletedAt !== null).toArray()).map((t) => t.id)
+  );
+  return edges.filter((e) => !deletedIds.has(e.fromTaskId) && !deletedIds.has(e.toTaskId));
 }
 
 export async function getTaskDependencies(taskId: string): Promise<DependencyEdge[]> {
@@ -474,7 +480,16 @@ export async function getTaskDependencies(taskId: string): Promise<DependencyEdg
     db.dependencyEdges.where('fromTaskId').equals(taskId).toArray(),
     db.dependencyEdges.where('toTaskId').equals(taskId).toArray(),
   ]);
-  return [...outgoing, ...incoming];
+  const allEdges = [...outgoing, ...incoming];
+  if (allEdges.length === 0) return allEdges;
+  // Filter out edges whose peer task has been soft-deleted (#20).
+  const peerIds = allEdges.map((e) => (e.fromTaskId === taskId ? e.toTaskId : e.fromTaskId));
+  const peers = await db.tasks.where('id').anyOf(peerIds).toArray();
+  const deletedPeerIds = new Set(peers.filter((t) => t.deletedAt !== null).map((t) => t.id));
+  return allEdges.filter((e) => {
+    const peerId = e.fromTaskId === taskId ? e.toTaskId : e.fromTaskId;
+    return !deletedPeerIds.has(peerId);
+  });
 }
 
 // ── Trash cleanup ──────────────────────────────────────────────────
@@ -483,7 +498,22 @@ const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
 export async function purgeOldTrash(): Promise<Result<void>> {
   const cutoff = Date.now() - THIRTY_DAYS_MS;
-  await db.tasks.filter((t) => t.deletedAt !== null && t.deletedAt < cutoff).delete();
+
+  // Collect task IDs about to be hard-deleted so we can remove their edges.
+  // Edges survive soft-delete to support restore (#20); they must be cleaned
+  // up here to avoid leaking orphaned rows.
+  const expiredTasks = await db.tasks
+    .filter((t) => t.deletedAt !== null && t.deletedAt < cutoff)
+    .toArray();
+  if (expiredTasks.length > 0) {
+    const expiredIds = expiredTasks.map((t) => t.id);
+    await Promise.all([
+      db.dependencyEdges.where('fromTaskId').anyOf(expiredIds).delete(),
+      db.dependencyEdges.where('toTaskId').anyOf(expiredIds).delete(),
+    ]);
+    await db.tasks.where('id').anyOf(expiredIds).delete();
+  }
+
   await db.projects.filter((p) => p.deletedAt !== null && p.deletedAt < cutoff).delete();
   return ok(undefined);
 }

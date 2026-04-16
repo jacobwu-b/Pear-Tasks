@@ -28,6 +28,7 @@ import {
   removeDependencyByTasks,
   getDependencyEdges,
   getTaskDependencies,
+  purgeOldTrash,
 } from '../../src/db/operations';
 
 beforeEach(async () => {
@@ -201,7 +202,7 @@ describe('Tasks', () => {
     expect(updated!.completedAt).toBeTypeOf('number');
   });
 
-  it('soft-deletes a task and removes its dependency edges', async () => {
+  it('soft-deletes a task: row remains with deletedAt set, edges hidden from getDependencyEdges', async () => {
     const { data: project } = await createProject('P1');
     const { data: t1 } = await createTask('T1', { projectId: project!.id });
     const { data: t2 } = await createTask('T2', { projectId: project!.id });
@@ -209,6 +210,7 @@ describe('Tasks', () => {
     await addDependency(t1!.id, t2!.id, project!.id);
     await softDeleteTask(t1!.id);
 
+    // Live query hides the edge because t1 is deleted
     const edges = await getDependencyEdges(project!.id);
     expect(edges).toHaveLength(0);
 
@@ -216,13 +218,27 @@ describe('Tasks', () => {
     expect(deleted!.deletedAt).toBeTypeOf('number');
   });
 
-  it('restores a soft-deleted task', async () => {
-    const { data: task } = await createTask('T1');
-    await softDeleteTask(task!.id);
-    await restoreTask(task!.id);
+  it('restores a soft-deleted task and recovers its dependency edges', async () => {
+    const { data: project } = await createProject('P1');
+    const { data: t1 } = await createTask('T1', { projectId: project!.id });
+    const { data: t2 } = await createTask('T2', { projectId: project!.id });
 
-    const restored = await getTask(task!.id);
+    await addDependency(t1!.id, t2!.id, project!.id);
+    await softDeleteTask(t1!.id);
+
+    // Edge is hidden while t1 is in Trash
+    expect(await getDependencyEdges(project!.id)).toHaveLength(0);
+
+    await restoreTask(t1!.id);
+
+    const restored = await getTask(t1!.id);
     expect(restored!.deletedAt).toBeNull();
+
+    // Edge comes back once t1 is restored
+    const edges = await getDependencyEdges(project!.id);
+    expect(edges).toHaveLength(1);
+    expect(edges[0].fromTaskId).toBe(t1!.id);
+    expect(edges[0].toTaskId).toBe(t2!.id);
   });
 
   it('returns inbox tasks (no project, no when)', async () => {
@@ -371,7 +387,7 @@ describe('Dependencies', () => {
     expect(edges).toHaveLength(0);
   });
 
-  it('softDeleteTask removes both outgoing and incoming edges (indexed path)', async () => {
+  it('softDeleteTask hides both outgoing and incoming edges from getDependencyEdges', async () => {
     const { data: project } = await createProject('P1');
     const { data: t1 } = await createTask('T1', { projectId: project!.id });
     const { data: t2 } = await createTask('T2', { projectId: project!.id });
@@ -383,8 +399,14 @@ describe('Dependencies', () => {
 
     await softDeleteTask(t2!.id);
 
+    // Both edges are hidden because t2 is deleted; t1 and t3 are not blocked
     const edges = await getDependencyEdges(project!.id);
     expect(edges).toHaveLength(0);
+
+    // Restoring t2 makes both edges visible again
+    await restoreTask(t2!.id);
+    const restoredEdges = await getDependencyEdges(project!.id);
+    expect(restoredEdges).toHaveLength(2);
   });
 
   it('getTaskDependencies returns edges in both directions', async () => {
@@ -415,5 +437,48 @@ describe('Dependencies', () => {
     const result = await addDependency(t3!.id, t1!.id, project!.id);
 
     expect(result.error).toBe('This would create a circular dependency');
+  });
+
+  it('getTaskDependencies hides edges to/from soft-deleted peers', async () => {
+    const { data: project } = await createProject('P1');
+    const { data: t1 } = await createTask('T1', { projectId: project!.id });
+    const { data: t2 } = await createTask('T2', { projectId: project!.id });
+
+    await addDependency(t1!.id, t2!.id, project!.id);
+    await softDeleteTask(t1!.id);
+
+    // t2 should see no incoming edges while t1 is in Trash
+    const depsWhileDeleted = await getTaskDependencies(t2!.id);
+    expect(depsWhileDeleted).toHaveLength(0);
+
+    await restoreTask(t1!.id);
+    const depsAfterRestore = await getTaskDependencies(t2!.id);
+    expect(depsAfterRestore).toHaveLength(1);
+  });
+});
+
+// ── purgeOldTrash ──────────────────────────────────────────────────
+
+describe('purgeOldTrash', () => {
+  it('hard-purges expired tasks and cleans up their dependency edges', async () => {
+    const { data: project } = await createProject('P1');
+    const { data: t1 } = await createTask('T1', { projectId: project!.id });
+    const { data: t2 } = await createTask('T2', { projectId: project!.id });
+
+    await addDependency(t1!.id, t2!.id, project!.id);
+
+    // Back-date t1's deletedAt to over 30 days ago
+    const THIRTY_ONE_DAYS_MS = 31 * 24 * 60 * 60 * 1000;
+    await db.tasks.update(t1!.id, { deletedAt: Date.now() - THIRTY_ONE_DAYS_MS });
+
+    await purgeOldTrash();
+
+    // t1 is gone; t2 survives
+    expect(await getTask(t1!.id)).toBeUndefined();
+    expect(await getTask(t2!.id)).toBeDefined();
+
+    // The edge was cleaned up when t1 was purged
+    const edges = await db.dependencyEdges.where('projectId').equals(project!.id).toArray();
+    expect(edges).toHaveLength(0);
   });
 });
