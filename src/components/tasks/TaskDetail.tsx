@@ -119,14 +119,8 @@ export default function TaskDetail() {
           onClick={() => setSelectedTaskId(null)}
           data-testid="close-detail"
           aria-label="Close detail panel"
-          className="p-1 rounded-md transition-colors cursor-pointer"
+          className="p-1 rounded-md transition-colors cursor-pointer hover-bg-surface"
           style={{ color: 'var(--color-text-tertiary)' }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.backgroundColor = 'var(--color-surface-hover)';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.backgroundColor = 'transparent';
-          }}
         >
           <svg viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5">
             <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
@@ -174,6 +168,7 @@ export default function TaskDetail() {
             <button
               onClick={() => handleWhenChange(task.when === 'someday' ? '' : 'someday')}
               data-testid="task-someday-btn"
+              aria-pressed={task.when === 'someday'}
               className="text-xs px-2 py-1 rounded transition-colors cursor-pointer"
               style={{
                 border: '1px solid var(--color-border-primary)',
@@ -264,14 +259,8 @@ export default function TaskDetail() {
             <button
               onClick={handleCancel}
               data-testid="task-cancel-btn"
-              className="px-3 py-1.5 rounded-md text-sm transition-colors cursor-pointer"
+              className="px-3 py-1.5 rounded-md text-sm transition-colors cursor-pointer hover-bg-surface"
               style={{ color: 'var(--color-text-secondary)' }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.backgroundColor = 'var(--color-surface-hover)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.backgroundColor = 'transparent';
-              }}
             >
               Cancel Task
             </button>
@@ -294,14 +283,8 @@ export default function TaskDetail() {
           onClick={handleDelete}
           data-testid="task-delete-btn"
           aria-label="Move to trash"
-          className="p-1.5 rounded-md transition-colors cursor-pointer"
+          className="p-1.5 rounded-md transition-colors cursor-pointer hover-text-overdue"
           style={{ color: 'var(--color-text-tertiary)' }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.color = 'var(--color-status-overdue)';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.color = 'var(--color-text-tertiary)';
-          }}
           title="Move to trash"
         >
           <svg viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5">
