@@ -143,14 +143,9 @@ export default function AppShell({ onDataManagement }: AppShellProps = {}) {
             onClick={handleHamburgerClick}
             data-testid="toggle-sidebar"
             aria-label="Toggle sidebar"
-            className="p-1.5 rounded-md transition-colors cursor-pointer"
+            aria-pressed={sidebarIsInline || sidebarIsOverlay}
+            className="p-1.5 rounded-md transition-colors cursor-pointer hover-bg-surface"
             style={{ color: 'var(--color-text-secondary)' }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.backgroundColor = 'var(--color-surface-hover)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.backgroundColor = 'transparent';
-            }}
             title="Toggle sidebar (⌘/)"
           >
             <svg viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5">
