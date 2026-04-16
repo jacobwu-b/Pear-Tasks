@@ -29,6 +29,9 @@ import {
   createTask as dbCreateTask,
   softDeleteTask as dbSoftDeleteTask,
   restoreTask as dbRestoreTask,
+  softDeleteProject as dbSoftDeleteProject,
+  restoreProject as dbRestoreProject,
+  getDeletedItems,
   getChecklistItems,
   addChecklistItem as dbAddChecklistItem,
   updateChecklistItem as dbUpdateChecklistItem,
@@ -57,6 +60,8 @@ interface TaskState {
   tasks: Task[];
   /** Dependency edges for the currently loaded project view. Empty for non-project views. */
   edges: DependencyEdge[];
+  /** Soft-deleted projects shown in Trash. Populated only when currentView === 'trash'. */
+  trashedProjects: Project[];
   /** Currently loaded view (to know when to reload) */
   currentView: SidebarView | null;
   /** Fresh snapshot of the task whose detail panel is open. Null when no task is selected. */
@@ -79,6 +84,8 @@ interface TaskState {
   createNewTask: (title: string, options?: Partial<Pick<Task, 'projectId' | 'areaId' | 'when' | 'deadline' | 'tags' | 'notes'>>) => Promise<Task | null>;
   deleteTask: (id: string) => Promise<void>;
   restoreTask: (id: string) => Promise<void>;
+  deleteProject: (id: string) => Promise<void>;
+  restoreProject: (id: string) => Promise<void>;
 
   // Selected task detail
   /** Load the task for the detail panel into `selectedTaskDetail`. Pass null to clear. */
@@ -126,6 +133,11 @@ async function fetchTasksForView(view: SidebarView): Promise<Task[]> {
   if (view.type === 'project') return getTasksByProject(view.projectId);
   if (view.type === 'area') return getTasksByArea(view.areaId);
   return [];
+}
+
+async function fetchTrashedProjects(): Promise<Project[]> {
+  const { projects } = await getDeletedItems();
+  return projects;
 }
 
 async function fetchEdgesForView(view: SidebarView): Promise<DependencyEdge[]> {
@@ -193,6 +205,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   projects: [],
   tasks: [],
   edges: [],
+  trashedProjects: [],
   currentView: null,
   selectedTaskDetail: null,
   checklistByTaskId: {},
@@ -204,21 +217,23 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   },
 
   loadTasksForView: async (view) => {
-    const [tasks, edges] = await Promise.all([
+    const [tasks, edges, trashedProjects] = await Promise.all([
       fetchTasksForView(view),
       fetchEdgesForView(view),
+      view === 'trash' ? fetchTrashedProjects() : Promise.resolve([]),
     ]);
-    set({ tasks, edges, currentView: view });
+    set({ tasks, edges, trashedProjects, currentView: view });
   },
 
   refreshTasks: async () => {
     const { currentView } = get();
-    const [tasks, edges, caches] = await Promise.all([
+    const [tasks, edges, caches, trashedProjects] = await Promise.all([
       currentView ? fetchTasksForView(currentView) : Promise.resolve(get().tasks),
       currentView ? fetchEdgesForView(currentView) : Promise.resolve(get().edges),
       refreshDetailCaches(get()),
+      currentView === 'trash' ? fetchTrashedProjects() : Promise.resolve(get().trashedProjects),
     ]);
-    set({ tasks, edges, ...caches });
+    set({ tasks, edges, trashedProjects, ...caches });
   },
 
   completeTask: async (id) => {
@@ -262,6 +277,23 @@ export const useTaskStore = create<TaskState>((set, get) => ({
 
   restoreTask: async (id) => {
     await dbRestoreTask(id);
+    await get().refreshTasks();
+  },
+
+  deleteProject: async (id) => {
+    await dbSoftDeleteProject(id);
+    // If the deleted project was the current view, fall back to Inbox.
+    const current = useUiStore.getState().sidebarView;
+    if (typeof current === 'object' && current.type === 'project' && current.projectId === id) {
+      useUiStore.getState().setSidebarView('inbox');
+    }
+    await get().loadSidebarData();
+    await get().refreshTasks();
+  },
+
+  restoreProject: async (id) => {
+    await dbRestoreProject(id);
+    await get().loadSidebarData();
     await get().refreshTasks();
   },
 
