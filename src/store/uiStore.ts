@@ -23,6 +23,10 @@ interface UiState {
   linkModeFirstTaskId: string | null;
   /** Whether the dependency graph panel is collapsed in project views */
   graphCollapsed: boolean;
+  /** Quick Capture modal visibility */
+  quickCaptureOpen: boolean;
+  /** Full New Task form visibility */
+  newTaskFormOpen: boolean;
 
   setSidebarView: (view: SidebarView) => void;
   setSelectedTaskId: (id: string | null) => void;
@@ -33,6 +37,10 @@ interface UiState {
   exitLinkMode: () => void;
   setLinkModeFirstTask: (id: string | null) => void;
   setGraphCollapsed: (collapsed: boolean) => void;
+  openQuickCapture: () => void;
+  closeQuickCapture: () => void;
+  openNewTaskForm: () => void;
+  closeNewTaskForm: () => void;
 }
 
 export const useUiStore = create<UiState>((set) => ({
@@ -43,6 +51,8 @@ export const useUiStore = create<UiState>((set) => ({
   linkMode: false,
   linkModeFirstTaskId: null,
   graphCollapsed: false,
+  quickCaptureOpen: false,
+  newTaskFormOpen: false,
 
   setSidebarView: (view) => set({ sidebarView: view, selectedTaskId: null }),
   setSelectedTaskId: (id) => set({ selectedTaskId: id }),
@@ -53,4 +63,8 @@ export const useUiStore = create<UiState>((set) => ({
   exitLinkMode: () => set({ linkMode: false, linkModeFirstTaskId: null }),
   setLinkModeFirstTask: (id) => set({ linkModeFirstTaskId: id }),
   setGraphCollapsed: (collapsed) => set({ graphCollapsed: collapsed }),
+  openQuickCapture: () => set({ quickCaptureOpen: true }),
+  closeQuickCapture: () => set({ quickCaptureOpen: false }),
+  openNewTaskForm: () => set({ newTaskFormOpen: true }),
+  closeNewTaskForm: () => set({ newTaskFormOpen: false }),
 }));

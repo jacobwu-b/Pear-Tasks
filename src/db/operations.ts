@@ -136,13 +136,13 @@ export async function getProject(id: string): Promise<Project | undefined> {
 
 export async function createTask(
   title: string,
-  options: Partial<Pick<Task, 'projectId' | 'areaId' | 'when' | 'deadline' | 'tags'>> = {}
+  options: Partial<Pick<Task, 'projectId' | 'areaId' | 'when' | 'deadline' | 'tags' | 'notes'>> = {}
 ): Promise<Result<Task>> {
   const maxOrder = await db.tasks.orderBy('sortOrder').last();
   const task: Task = {
     id: generateId(),
     title,
-    notes: '',
+    notes: options.notes ?? '',
     status: 'open',
     when: options.when ?? null,
     deadline: options.deadline ?? null,
