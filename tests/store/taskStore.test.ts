@@ -6,7 +6,7 @@ import { useTaskStore } from '../../src/store/taskStore';
 beforeEach(async () => {
   await db.delete();
   await db.open();
-  useTaskStore.setState({ areas: [], projects: [], tasks: [], edges: [], currentView: null });
+  useTaskStore.setState({ areas: [], projects: [], tasks: [], edges: [], trashedProjects: [], currentView: null });
 });
 
 describe('taskStore', () => {
@@ -229,5 +229,77 @@ describe('taskStore', () => {
     await useTaskStore.getState().deleteTask(task!.id);
 
     expect(useTaskStore.getState().tasks).toHaveLength(0);
+  });
+
+  // -- Trash: deleted projects --
+
+  it('trash view populates trashedProjects with soft-deleted projects', async () => {
+    const { data: active } = await createProject('Active Project');
+    const { data: deleted } = await createProject('Deleted Project');
+
+    // Soft-delete one project directly so the trash view can surface it
+    await useTaskStore.getState().loadTasksForView('inbox');
+    await useTaskStore.getState().deleteProject(deleted!.id);
+
+    await useTaskStore.getState().loadTasksForView('trash');
+
+    const { trashedProjects } = useTaskStore.getState();
+    expect(trashedProjects).toHaveLength(1);
+    expect(trashedProjects[0].id).toBe(deleted!.id);
+    // Active project must not appear in trash
+    expect(trashedProjects.map((p) => p.id)).not.toContain(active!.id);
+  });
+
+  it('trash view does not include active projects in trashedProjects', async () => {
+    await createProject('Live Project A');
+    await createProject('Live Project B');
+
+    await useTaskStore.getState().loadTasksForView('trash');
+
+    expect(useTaskStore.getState().trashedProjects).toHaveLength(0);
+  });
+
+  it('restoreProject removes project from trashedProjects and reloads sidebar', async () => {
+    const { data: project } = await createProject('Restore Me');
+    await useTaskStore.getState().deleteProject(project!.id);
+    await useTaskStore.getState().loadTasksForView('trash');
+    expect(useTaskStore.getState().trashedProjects).toHaveLength(1);
+
+    await useTaskStore.getState().restoreProject(project!.id);
+
+    // trashedProjects should be empty after restore
+    expect(useTaskStore.getState().trashedProjects).toHaveLength(0);
+    // Project should be back in the sidebar (projects list)
+    expect(useTaskStore.getState().projects.map((p) => p.id)).toContain(project!.id);
+  });
+
+  it('deleteProject soft-deletes project and it appears in trash view', async () => {
+    const { data: project } = await createProject('Soft Delete Me');
+
+    await useTaskStore.getState().loadTasksForView('inbox');
+    await useTaskStore.getState().deleteProject(project!.id);
+
+    // Project should no longer appear in sidebar
+    expect(useTaskStore.getState().projects.map((p) => p.id)).not.toContain(project!.id);
+
+    // Project should appear in trash
+    await useTaskStore.getState().loadTasksForView('trash');
+    expect(useTaskStore.getState().trashedProjects.map((p) => p.id)).toContain(project!.id);
+  });
+
+  it('restoring a project also restores its tasks', async () => {
+    const { data: project } = await createProject('Project With Tasks');
+    const { data: task } = await createTask('Task in project', { projectId: project!.id });
+
+    await useTaskStore.getState().deleteProject(project!.id);
+    // Task should appear in trash
+    await useTaskStore.getState().loadTasksForView('trash');
+    expect(useTaskStore.getState().tasks.map((t) => t.id)).toContain(task!.id);
+
+    await useTaskStore.getState().restoreProject(project!.id);
+
+    // After restore, trash tasks should not contain the project task
+    await useTaskStore.getState().loadTasksForView('trash');
+    expect(useTaskStore.getState().tasks.map((t) => t.id)).not.toContain(task!.id);
   });
 });
