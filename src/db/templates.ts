@@ -164,37 +164,50 @@ export async function instantiateTemplate(
   const template = await db.templates.get(templateId);
   if (!template) return err('Template not found');
 
-  // Create the project
-  const projectResult = await createProject(projectName, areaId);
-  if (projectResult.error) return err(projectResult.error);
-  const project = projectResult.data!;
+  try {
+    const projectId = await db.transaction(
+      'rw',
+      [db.projects, db.tasks, db.checklistItems, db.dependencyEdges],
+      async () => {
+        // Create the project
+        const projectResult = await createProject(projectName, areaId);
+        if (projectResult.error) throw new Error(projectResult.error);
+        const project = projectResult.data!;
 
-  // Create tasks and map tempId → real taskId
-  const tempIdToTaskId = new Map<string, string>();
+        // Create tasks and map tempId → real taskId
+        const tempIdToTaskId = new Map<string, string>();
 
-  for (let i = 0; i < template.tasks.length; i++) {
-    const tmplTask = template.tasks[i];
-    const taskResult = await createTask(tmplTask.title, { projectId: project.id });
-    if (taskResult.error) continue;
-    const task = taskResult.data!;
-    tempIdToTaskId.set(tmplTask.tempId, task.id);
+        for (const tmplTask of template.tasks) {
+          const taskResult = await createTask(tmplTask.title, { projectId: project.id });
+          if (taskResult.error) throw new Error(taskResult.error);
+          const task = taskResult.data!;
+          tempIdToTaskId.set(tmplTask.tempId, task.id);
 
-    // Create checklist items
-    for (const checkTitle of tmplTask.checklistTitles) {
-      await addChecklistItem(task.id, checkTitle);
-    }
+          // Create checklist items
+          for (const checkTitle of tmplTask.checklistTitles) {
+            const checkResult = await addChecklistItem(task.id, checkTitle);
+            if (checkResult.error) throw new Error(checkResult.error);
+          }
+        }
+
+        // Wire dependency edges
+        for (const edge of template.edges) {
+          const fromId = tempIdToTaskId.get(edge.fromTempId);
+          const toId = tempIdToTaskId.get(edge.toTempId);
+          if (fromId && toId) {
+            const depResult = await addDependency(fromId, toId, project.id);
+            if (depResult.error) throw new Error(depResult.error);
+          }
+        }
+
+        return project.id;
+      }
+    );
+
+    return ok({ projectId });
+  } catch (e) {
+    return err(e instanceof Error ? e.message : 'Failed to instantiate template');
   }
-
-  // Wire dependency edges
-  for (const edge of template.edges) {
-    const fromId = tempIdToTaskId.get(edge.fromTempId);
-    const toId = tempIdToTaskId.get(edge.toTempId);
-    if (fromId && toId) {
-      await addDependency(fromId, toId, project.id);
-    }
-  }
-
-  return ok({ projectId: project.id });
 }
 
 // ── Save existing project as template ─────────────────────────────
