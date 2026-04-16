@@ -121,6 +121,51 @@ describe('taskStore', () => {
     expect(tasks).toHaveLength(0);
   });
 
+  it('completeTask does not complete a task blocked by an incomplete predecessor', async () => {
+    const { data: project } = await createProject('Blocked test project');
+    const { data: predecessor } = await createTask('Predecessor', { projectId: project!.id });
+    const { data: blocked } = await createTask('Blocked task', { projectId: project!.id });
+    await addDependency(predecessor!.id, blocked!.id, project!.id);
+
+    await useTaskStore.getState().loadTasksForView({ type: 'project', projectId: project!.id });
+    await useTaskStore.getState().completeTask(blocked!.id);
+
+    // The blocked task should still be open because its predecessor is incomplete
+    const { tasks } = useTaskStore.getState();
+    const blockedTask = tasks.find((t) => t.id === blocked!.id);
+    expect(blockedTask!.status).toBe('open');
+  });
+
+  it('completeTask succeeds when all blocking predecessors are completed', async () => {
+    const { data: project } = await createProject('Unblocked test project');
+    const { data: predecessor } = await createTask('Predecessor', { projectId: project!.id });
+    const { data: dependent } = await createTask('Dependent task', { projectId: project!.id });
+    await addDependency(predecessor!.id, dependent!.id, project!.id);
+    await updateTask(predecessor!.id, { status: 'completed', completedAt: Date.now() });
+
+    await useTaskStore.getState().loadTasksForView({ type: 'project', projectId: project!.id });
+    await useTaskStore.getState().completeTask(dependent!.id);
+
+    const { tasks } = useTaskStore.getState();
+    const dependentTask = tasks.find((t) => t.id === dependent!.id);
+    expect(dependentTask!.status).toBe('completed');
+  });
+
+  it('completeTask succeeds when blocking predecessor is canceled', async () => {
+    const { data: project } = await createProject('Canceled blocker project');
+    const { data: predecessor } = await createTask('Predecessor', { projectId: project!.id });
+    const { data: dependent } = await createTask('Dependent task', { projectId: project!.id });
+    await addDependency(predecessor!.id, dependent!.id, project!.id);
+    await updateTask(predecessor!.id, { status: 'canceled', completedAt: Date.now() });
+
+    await useTaskStore.getState().loadTasksForView({ type: 'project', projectId: project!.id });
+    await useTaskStore.getState().completeTask(dependent!.id);
+
+    const { tasks } = useTaskStore.getState();
+    const dependentTask = tasks.find((t) => t.id === dependent!.id);
+    expect(dependentTask!.status).toBe('completed');
+  });
+
   it('reopenTask marks task open and refreshes', async () => {
     const { data: task } = await createTask('Do this');
     await updateTask(task!.id, { status: 'completed', completedAt: Date.now() });

@@ -74,12 +74,14 @@ export default function TaskList() {
   const blockedCounts = useMemo(() => {
     if (edges.length === 0) return new Map<string, number>();
 
-    const completedIds = new Set(
-      tasks.filter((t) => t.status === 'completed').map((t) => t.id)
+    // Canceled tasks are treated as done for blocking purposes — they're
+    // out of the workflow just like completed tasks.
+    const doneIds = new Set(
+      tasks.filter((t) => t.status === 'completed' || t.status === 'canceled').map((t) => t.id)
     );
     const counts = new Map<string, number>();
     for (const edge of edges) {
-      if (!completedIds.has(edge.fromTaskId)) {
+      if (!doneIds.has(edge.fromTaskId)) {
         counts.set(edge.toTaskId, (counts.get(edge.toTaskId) ?? 0) + 1);
       }
     }

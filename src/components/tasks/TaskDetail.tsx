@@ -2,6 +2,7 @@ import { useState, useRef } from 'react';
 import { useUiStore } from '../../store/uiStore';
 import { useTaskStore } from '../../store/taskStore';
 import { useSelectedTask } from '../../hooks/useSelectedTask';
+import { useResolvedDeps } from '../../hooks/useResolvedDeps';
 import ChecklistEditor from './ChecklistEditor';
 import TagEditor from './TagEditor';
 import DependencySection from '../dependencies/DependencySection';
@@ -78,6 +79,11 @@ export default function TaskDetail() {
     await deleteTask(task.id);
     setSelectedTaskId(null);
   };
+
+  const resolvedDeps = useResolvedDeps(task?.id ?? '', task?.projectId ?? null);
+  const isBlocked = resolvedDeps.some(
+    (d) => d.direction === 'blockedBy' && d.task.status !== 'completed' && d.task.status !== 'canceled'
+  );
 
   if (!task) {
     return (
@@ -244,11 +250,15 @@ export default function TaskDetail() {
           <>
             <button
               onClick={handleComplete}
+              disabled={isBlocked}
               data-testid="task-complete-btn"
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors cursor-pointer"
+              title={isBlocked ? 'Complete all blocking tasks first' : undefined}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors"
               style={{
                 backgroundColor: 'var(--color-status-completed)',
                 color: 'white',
+                opacity: isBlocked ? 0.4 : 1,
+                cursor: isBlocked ? 'not-allowed' : 'pointer',
               }}
             >
               <svg viewBox="0 0 16 16" fill="currentColor" className="w-4 h-4">
