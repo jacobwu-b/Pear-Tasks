@@ -22,7 +22,11 @@ function useIsMobile() {
   return isMobile;
 }
 
-export default function AppShell() {
+interface AppShellProps {
+  onDataManagement?: () => void;
+}
+
+export default function AppShell({ onDataManagement }: AppShellProps = {}) {
   const {
     sidebarCollapsed,
     mobileSidebarOpen,
@@ -73,7 +77,7 @@ export default function AppShell() {
           className="shrink-0 h-full"
           style={{ width: 'var(--sidebar-width)' }}
         >
-          <Sidebar onNewProject={handleNewProject} />
+          <Sidebar onNewProject={handleNewProject} onDataManagement={onDataManagement} />
         </div>
       )}
 
@@ -92,7 +96,7 @@ export default function AppShell() {
             className="fixed inset-y-0 left-0 z-50 h-full shadow-lg"
             style={{ width: 'var(--sidebar-width)' }}
           >
-            <Sidebar onNavigate={closeMobileSidebar} onNewProject={handleNewProject} />
+            <Sidebar onNavigate={closeMobileSidebar} onNewProject={handleNewProject} onDataManagement={onDataManagement} />
           </div>
         </>
       )}

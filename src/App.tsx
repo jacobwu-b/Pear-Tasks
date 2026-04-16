@@ -4,6 +4,7 @@ import QuickCapture from './components/tasks/QuickCapture'
 import NewTaskForm from './components/tasks/NewTaskForm'
 import ShortcutHelp from './components/common/ShortcutHelp'
 import SearchPalette from './components/common/SearchPalette'
+import DataManagement from './components/common/DataManagement'
 import { seedOnFirstLaunch } from './db/seed'
 import { seedBuiltInTemplates } from './db/templates'
 import { useUiStore } from './store/uiStore'
@@ -14,6 +15,7 @@ function App() {
   const [ready, setReady] = useState(false)
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
+  const [dataOpen, setDataOpen] = useState(false)
 
   const quickCaptureOpen = useUiStore((s) => s.quickCaptureOpen)
   const newTaskFormOpen = useUiStore((s) => s.newTaskFormOpen)
@@ -90,10 +92,11 @@ function App() {
 
   return (
     <>
-      <AppShell />
+      <AppShell onDataManagement={() => setDataOpen(true)} />
       <QuickCapture open={quickCaptureOpen} onClose={closeQuickCapture} />
       <NewTaskForm open={newTaskFormOpen} onClose={closeNewTaskForm} />
       <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} />
+      <DataManagement open={dataOpen} onClose={() => setDataOpen(false)} />
       <ShortcutHelp open={shortcutHelpOpen} onClose={() => setShortcutHelpOpen(false)} />
     </>
   )
