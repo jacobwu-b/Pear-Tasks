@@ -68,6 +68,15 @@ export const SHORTCUTS: ShortcutDef[] = [
     key: 's',
     requiresNoTextFocus: true,
   },
+  // ── Search ───────────────────────────────────────────────────────────
+  {
+    id: 'search',
+    label: 'Search',
+    category: 'navigation',
+    display: '⌘K',
+    key: 'k',
+    meta: true,
+  },
   // ── Navigation ──────────────────────────────────────────────────────
   {
     id: 'toggleSidebar',
