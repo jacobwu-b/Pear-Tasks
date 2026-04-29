@@ -42,6 +42,7 @@ import {
   getDependencyEdges as dbGetDependencyEdges,
   completeTaskWithRecurrence as dbCompleteTaskWithRecurrence,
   updateRecurrenceForward as dbUpdateRecurrenceForward,
+  updateTaskForward as dbUpdateTaskForward,
 } from '../db/operations';
 
 /**
@@ -97,6 +98,17 @@ interface TaskState {
   updateTaskRecurrence: (
     id: string,
     recurrence: RecurrenceConfig | null,
+    scope: 'this' | 'forward',
+  ) => Promise<void>;
+  /**
+   * Apply arbitrary field changes to a recurring task with scope control.
+   * - scope 'this': update only this task instance.
+   * - scope 'forward': update this task and all open future instances in the chain.
+   * For non-recurring tasks, scope is ignored and the update applies to this task only.
+   */
+  updateTaskFieldScoped: (
+    id: string,
+    changes: Partial<Omit<Task, 'id' | 'createdAt'>>,
     scope: 'this' | 'forward',
   ) => Promise<void>;
   deleteProject: (id: string) => Promise<void>;
@@ -324,6 +336,20 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       const rootId = task.recurringParentId ?? task.id;
       const fromWhen = (task.when && task.when !== 'someday') ? task.when as string : '';
       await dbUpdateRecurrenceForward(id, rootId, fromWhen, recurrence);
+    }
+    await get().refreshTasks();
+  },
+
+  updateTaskFieldScoped: async (id, changes, scope) => {
+    if (scope === 'this') {
+      await dbUpdateTask(id, changes);
+    } else {
+      // 'forward': update this task and all open future siblings
+      const task = await getTask(id);
+      if (!task) return;
+      const rootId = task.recurringParentId ?? task.id;
+      const fromWhen = (task.when && task.when !== 'someday') ? task.when as string : '';
+      await dbUpdateTaskForward(id, rootId, fromWhen, changes);
     }
     await get().refreshTasks();
   },

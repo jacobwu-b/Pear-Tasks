@@ -564,6 +564,42 @@ export async function completeTaskWithRecurrence(
 }
 
 /**
+ * Apply arbitrary field changes to the given task and all open sibling
+ * instances that share the same root and are scheduled on or after `fromWhen`.
+ *
+ * Used for the "edit this and following occurrences" action for any field
+ * (title, notes, deadline, tags, when, etc.).
+ *
+ * `rootId` is the recurringParentId of the chain, or the task's own id if it
+ * is itself the root (recurringParentId === null).
+ */
+export async function updateTaskForward(
+  taskId: string,
+  rootId: string,
+  fromWhen: string,
+  changes: Partial<Omit<Task, 'id' | 'createdAt'>>,
+): Promise<Result<void>> {
+  // Update the task being edited directly.
+  await db.tasks.update(taskId, changes);
+
+  // Update all open siblings at or after fromWhen.
+  await db.tasks
+    .where('recurringParentId')
+    .equals(rootId)
+    .filter(
+      (t) =>
+        t.id !== taskId &&
+        t.status === 'open' &&
+        t.when !== null &&
+        t.when !== 'someday' &&
+        (t.when as string) >= fromWhen,
+    )
+    .modify(changes);
+
+  return ok(undefined);
+}
+
+/**
  * Update the recurrence rule on the given task and all open sibling instances
  * that share the same root and are scheduled on or after `fromWhen`.
  *

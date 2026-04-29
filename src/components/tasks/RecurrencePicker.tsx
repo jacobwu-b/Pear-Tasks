@@ -407,26 +407,37 @@ export default function RecurrencePicker({ value, onChange }: RecurrencePickerPr
             </div>
           )}
 
-          {/* End date */}
+          {/* End date — opt-in only; no end date by default */}
           <div className="flex items-center gap-2">
-            <span className="text-xs" style={labelStyle}>End</span>
-            <input
-              type="date"
-              value={draft.endDate ?? ''}
-              onChange={(e) => updateDraft({ endDate: e.target.value || null })}
-              className="text-sm px-2 py-1 rounded outline-none"
-              style={inputStyle}
-              data-testid="recurrence-end-date"
-            />
-            {draft.endDate && (
-              <button
-                type="button"
-                onClick={() => updateDraft({ endDate: null })}
-                className="text-xs cursor-pointer"
-                style={{ color: 'var(--color-text-tertiary)' }}
-              >
-                Clear
-              </button>
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={draft.endDate !== null}
+                onChange={(e) => {
+                  if (e.target.checked) {
+                    // Default to 30 days from today when the user first opts in
+                    const d = new Date();
+                    d.setDate(d.getDate() + 30);
+                    const iso = d.toISOString().slice(0, 10);
+                    updateDraft({ endDate: iso });
+                  } else {
+                    updateDraft({ endDate: null });
+                  }
+                }}
+                data-testid="recurrence-end-date-toggle"
+                className="cursor-pointer"
+              />
+              <span className="text-xs" style={labelStyle}>End on</span>
+            </label>
+            {draft.endDate !== null && (
+              <input
+                type="date"
+                value={draft.endDate}
+                onChange={(e) => updateDraft({ endDate: e.target.value || null })}
+                className="text-sm px-2 py-1 rounded outline-none"
+                style={inputStyle}
+                data-testid="recurrence-end-date"
+              />
             )}
           </div>
 

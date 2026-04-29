@@ -8,11 +8,19 @@ import TagEditor from './TagEditor';
 import DependencySection from '../dependencies/DependencySection';
 import RecurrencePicker from './RecurrencePicker';
 import EditRecurrenceDialog from '../common/EditRecurrenceDialog';
-import type { RecurrenceConfig } from '../../types';
+import type { RecurrenceConfig, Task } from '../../types';
 
 export default function TaskDetail() {
   const { setSelectedTaskId } = useUiStore();
-  const { updateTaskField, completeTask, cancelTask, reopenTask, deleteTask, updateTaskRecurrence } = useTaskStore();
+  const {
+    updateTaskField,
+    updateTaskFieldScoped,
+    updateTaskRecurrence,
+    completeTask,
+    cancelTask,
+    reopenTask,
+    deleteTask,
+  } = useTaskStore();
 
   const task = useSelectedTask();
 
@@ -25,10 +33,9 @@ export default function TaskDetail() {
   const [syncedTaskId, setSyncedTaskId] = useState<string | null>(null);
   const titleRef = useRef<HTMLInputElement>(null);
 
-  // Recurrence edit state — when the user applies a new rule on an already-recurring
-  // task we show a dialog asking "this only" vs "this and following".
-  const [pendingRecurrence, setPendingRecurrence] = useState<RecurrenceConfig | null | undefined>(undefined);
-  const recurrenceDialogOpen = pendingRecurrence !== undefined;
+  // Pending field change for recurring tasks — stored while the scope dialog is open.
+  // null means the dialog is closed. When set, EditRecurrenceDialog is shown.
+  const [pendingChanges, setPendingChanges] = useState<Partial<Omit<Task, 'id' | 'createdAt'>> | null>(null);
 
   if (task && task.id !== syncedTaskId) {
     // React allows setState during render when it's conditional on a prop
@@ -38,63 +45,76 @@ export default function TaskDetail() {
     setNotes(task.notes);
   }
 
-  // Save title on blur
-  const handleTitleBlur = async () => {
-    if (!task || title === task.title) return;
-    await updateTaskField(task.id, { title });
-  };
-
-  // Save notes on blur
-  const handleNotesBlur = async () => {
-    if (!task || notes === task.notes) return;
-    await updateTaskField(task.id, { notes });
-  };
-
-  const handleWhenChange = async (value: string) => {
+  /**
+   * Save a field change. For recurring tasks, shows the scope dialog so the
+   * user can choose whether to update just this occurrence or all following.
+   * For non-recurring tasks, applies immediately.
+   */
+  const saveField = (changes: Partial<Omit<Task, 'id' | 'createdAt'>>) => {
     if (!task) return;
-    const when = value === '' ? null : value;
-    await updateTaskField(task.id, { when });
-  };
-
-  const handleDeadlineChange = async (value: string) => {
-    if (!task) return;
-    const deadline = value === '' ? null : value;
-    await updateTaskField(task.id, { deadline });
-  };
-
-  const handleTagsChange = async (tags: string[]) => {
-    if (!task) return;
-    await updateTaskField(task.id, { tags });
-  };
-
-  // Called by RecurrencePicker when the user hits Apply.
-  // If the task is already recurring, show the scope dialog first.
-  const handleRecurrenceChange = (newConfig: RecurrenceConfig | null) => {
-    if (!task) return;
-    const wasRecurring = task.recurrence !== null;
-    if (wasRecurring) {
-      // Defer the save until the user picks a scope in the dialog.
-      setPendingRecurrence(newConfig);
+    if (task.recurrence !== null) {
+      // Defer until the user picks a scope.
+      setPendingChanges(changes);
     } else {
-      // Brand-new recurrence — no siblings to worry about.
-      void updateTaskRecurrence(task.id, newConfig, 'this');
+      void updateTaskField(task.id, changes);
     }
   };
 
+  // Save title on blur
+  const handleTitleBlur = () => {
+    if (!task || title === task.title) return;
+    saveField({ title });
+  };
+
+  // Save notes on blur
+  const handleNotesBlur = () => {
+    if (!task || notes === task.notes) return;
+    saveField({ notes });
+  };
+
+  const handleWhenChange = (value: string) => {
+    if (!task) return;
+    saveField({ when: value === '' ? null : value });
+  };
+
+  const handleDeadlineChange = (value: string) => {
+    if (!task) return;
+    saveField({ deadline: value === '' ? null : value });
+  };
+
+  const handleTagsChange = (tags: string[]) => {
+    if (!task) return;
+    saveField({ tags });
+  };
+
+  // Recurrence rule changes are always applied to this and all following
+  // occurrences — the scope is unambiguous so no dialog is needed.
+  const handleRecurrenceChange = (newConfig: RecurrenceConfig | null) => {
+    if (!task) return;
+    void updateTaskRecurrence(task.id, newConfig, 'forward');
+  };
+
+  // Scope dialog handlers
   const handleEditThis = () => {
-    if (!task || pendingRecurrence === undefined) return;
-    void updateTaskRecurrence(task.id, pendingRecurrence, 'this');
-    setPendingRecurrence(undefined);
+    if (!task || !pendingChanges) return;
+    void updateTaskFieldScoped(task.id, pendingChanges, 'this');
+    setPendingChanges(null);
   };
 
   const handleEditForward = () => {
-    if (!task || pendingRecurrence === undefined) return;
-    void updateTaskRecurrence(task.id, pendingRecurrence, 'forward');
-    setPendingRecurrence(undefined);
+    if (!task || !pendingChanges) return;
+    void updateTaskFieldScoped(task.id, pendingChanges, 'forward');
+    setPendingChanges(null);
   };
 
-  const handleRecurrenceDialogCancel = () => {
-    setPendingRecurrence(undefined);
+  const handleScopeDialogCancel = () => {
+    // Revert the local title/notes draft to the saved values so the input
+    // doesn't show unsaved text after dismissal.
+    if (task) {
+      setTitle(task.title);
+      setNotes(task.notes);
+    }
+    setPendingChanges(null);
   };
 
   const handleComplete = async () => {
@@ -284,10 +304,10 @@ export default function TaskDetail() {
 
       {/* Recurrence scope dialog */}
       <EditRecurrenceDialog
-        open={recurrenceDialogOpen}
+        open={pendingChanges !== null}
         onEditThis={handleEditThis}
         onEditForward={handleEditForward}
-        onCancel={handleRecurrenceDialogCancel}
+        onCancel={handleScopeDialogCancel}
       />
 
       {/* Actions footer */}
