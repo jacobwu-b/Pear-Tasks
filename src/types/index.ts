@@ -2,6 +2,55 @@
 
 export type TaskStatus = 'open' | 'completed' | 'canceled';
 
+// -- Recurrence --
+
+export type RecurrenceFrequency = 'daily' | 'weekly' | 'monthly' | 'yearly';
+
+/** 0=Sun, 1=Mon, … 6=Sat — matches Date.getDay() */
+export type DayOfWeek = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+
+export type OrdinalPosition =
+  | 'first'
+  | 'second'
+  | 'third'
+  | 'fourth'
+  | 'last'
+  | 'secondToLast';
+
+/**
+ * The "day kind" used in positional monthly/yearly rules.
+ * - A DayOfWeek selects a specific weekday (e.g. "first Monday").
+ * - 'day' means any calendar day (ordinal within the month).
+ * - 'weekday' means Mon–Fri.
+ * - 'weekendDay' means Sat or Sun.
+ * - 'fullWeekend' means a contiguous Sat+Sun pair both within the same month.
+ *   Combined with OrdinalPosition to get e.g. "second full weekend".
+ */
+export type PositionalTarget =
+  | DayOfWeek
+  | 'day'
+  | 'weekday'
+  | 'weekendDay'
+  | 'fullWeekend';
+
+export type MonthlySpec =
+  | { kind: 'dayOfMonth'; day: number }
+  | { kind: 'positional'; position: OrdinalPosition; target: PositionalTarget };
+
+export interface RecurrenceConfig {
+  frequency: RecurrenceFrequency;
+  /** Every N periods (≥1). */
+  interval: number;
+  /** Weekly only: which weekdays to fire on. Empty = same day as the task's when date. */
+  daysOfWeek: DayOfWeek[];
+  /** Monthly/yearly: the specific day-of-month or positional rule. Null for daily/weekly. */
+  monthlySpec: MonthlySpec | null;
+  /** Yearly only: month number 1–12. Null for other frequencies. */
+  month: number | null;
+  /** Inclusive end date YYYY-MM-DD after which no new instances are spawned. Null = no end. */
+  endDate: string | null;
+}
+
 export type ProjectStatus = 'active' | 'completed' | 'canceled' | 'someday';
 
 /** "When" scheduling: a date string (YYYY-MM-DD) or the special 'someday' value */
@@ -45,6 +94,13 @@ export interface Task {
   createdAt: number;
   completedAt: number | null;
   deletedAt: number | null;
+  /** Recurrence rule. Null means the task does not repeat. */
+  recurrence: RecurrenceConfig | null;
+  /**
+   * ID of the root ancestor task in the recurrence chain. Null on the root itself.
+   * Indexed in Dexie so we can efficiently query all instances of a recurring task.
+   */
+  recurringParentId: string | null;
 }
 
 export interface ChecklistItem {

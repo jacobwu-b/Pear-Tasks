@@ -2,6 +2,7 @@ import { useMemo, useState, useEffect, useRef } from 'react';
 import Modal from '../common/Modal';
 import { useTaskStore } from '../../store/taskStore';
 import { parseQuickCaptureInput } from '../../lib/dates';
+import { summarizeRecurrence } from '../../lib/recurrence';
 
 interface QuickCaptureProps {
   open: boolean;
@@ -44,7 +45,10 @@ function QuickCaptureBody({ onClose }: { onClose: () => void }) {
   const handleSubmit = async () => {
     if (!canSubmit) return;
     setSubmitting(true);
-    await createNewTask(parsed.title, { when: parsed.when ?? undefined });
+    await createNewTask(parsed.title, {
+      when: parsed.when ?? undefined,
+      recurrence: parsed.recurrence ?? undefined,
+    });
     onClose();
   };
 
@@ -65,7 +69,7 @@ function QuickCaptureBody({ onClose }: { onClose: () => void }) {
             handleSubmit();
           }
         }}
-        placeholder="New to-do — try 'Buy milk tomorrow'"
+        placeholder="New to-do — try 'trash every weekend'"
         aria-label="Task title (natural language dates supported)"
         className="flex-1 text-base bg-transparent outline-none"
         style={{ color: 'var(--color-text-primary)' }}
@@ -80,6 +84,18 @@ function QuickCaptureBody({ onClose }: { onClose: () => void }) {
           }}
         >
           {formatDateChip(parsed.when)}
+        </span>
+      )}
+      {parsed.recurrence && (
+        <span
+          data-testid="quick-capture-recurrence-chip"
+          className="shrink-0 px-2 py-0.5 rounded-md text-xs font-medium"
+          style={{
+            color: 'var(--color-accent)',
+            backgroundColor: 'var(--color-accent-subtle)',
+          }}
+        >
+          {summarizeRecurrence(parsed.recurrence)}
         </span>
       )}
     </div>

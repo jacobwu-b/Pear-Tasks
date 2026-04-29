@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Area, Project, Task, ChecklistItem, DependencyEdge, ProjectTemplate } from '../types';
+import type { Area, Project, Task, ChecklistItem, DependencyEdge, ProjectTemplate, RecurrenceConfig } from '../types';
 import type { SidebarView } from './uiStore';
 import {
   getTemplates as dbGetTemplates,
@@ -40,6 +40,9 @@ import {
   removeDependencyByTasks as dbRemoveDependencyByTasks,
   getTaskDependencies as dbGetTaskDependencies,
   getDependencyEdges as dbGetDependencyEdges,
+  completeTaskWithRecurrence as dbCompleteTaskWithRecurrence,
+  updateRecurrenceForward as dbUpdateRecurrenceForward,
+  updateTaskForward as dbUpdateTaskForward,
 } from '../db/operations';
 
 /**
@@ -81,9 +84,33 @@ interface TaskState {
   cancelTask: (id: string) => Promise<void>;
   reopenTask: (id: string) => Promise<void>;
   updateTaskField: (id: string, changes: Partial<Omit<Task, 'id' | 'createdAt'>>) => Promise<void>;
-  createNewTask: (title: string, options?: Partial<Pick<Task, 'projectId' | 'areaId' | 'when' | 'deadline' | 'tags' | 'notes'>>) => Promise<Task | null>;
+  createNewTask: (
+    title: string,
+    options?: Partial<Pick<Task, 'projectId' | 'areaId' | 'when' | 'deadline' | 'tags' | 'notes' | 'recurrence' | 'recurringParentId'>>
+  ) => Promise<Task | null>;
   deleteTask: (id: string) => Promise<void>;
   restoreTask: (id: string) => Promise<void>;
+  /**
+   * Update the recurrence rule on a recurring task.
+   * - scope 'this': update only this task instance.
+   * - scope 'forward': update this task and all open future instances in the chain.
+   */
+  updateTaskRecurrence: (
+    id: string,
+    recurrence: RecurrenceConfig | null,
+    scope: 'this' | 'forward',
+  ) => Promise<void>;
+  /**
+   * Apply arbitrary field changes to a recurring task with scope control.
+   * - scope 'this': update only this task instance.
+   * - scope 'forward': update this task and all open future instances in the chain.
+   * For non-recurring tasks, scope is ignored and the update applies to this task only.
+   */
+  updateTaskFieldScoped: (
+    id: string,
+    changes: Partial<Omit<Task, 'id' | 'createdAt'>>,
+    scope: 'this' | 'forward',
+  ) => Promise<void>;
   deleteProject: (id: string) => Promise<void>;
   restoreProject: (id: string) => Promise<void>;
 
@@ -244,7 +271,9 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       (d) => d.direction === 'blockedBy' && d.task.status !== 'completed' && d.task.status !== 'canceled'
     );
     if (isBlocked) return;
-    await dbUpdateTask(id, { status: 'completed', completedAt: Date.now() });
+    // Use the recurrence-aware completion path. For non-recurring tasks it
+    // behaves identically to a plain status update.
+    await dbCompleteTaskWithRecurrence(id);
     await get().refreshTasks();
   },
 
@@ -294,6 +323,34 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   restoreProject: async (id) => {
     await dbRestoreProject(id);
     await get().loadSidebarData();
+    await get().refreshTasks();
+  },
+
+  updateTaskRecurrence: async (id, recurrence, scope) => {
+    if (scope === 'this') {
+      await dbUpdateTask(id, { recurrence });
+    } else {
+      // 'forward': update this task and all open future siblings
+      const task = await getTask(id);
+      if (!task) return;
+      const rootId = task.recurringParentId ?? task.id;
+      const fromWhen = (task.when && task.when !== 'someday') ? task.when as string : '';
+      await dbUpdateRecurrenceForward(id, rootId, fromWhen, recurrence);
+    }
+    await get().refreshTasks();
+  },
+
+  updateTaskFieldScoped: async (id, changes, scope) => {
+    if (scope === 'this') {
+      await dbUpdateTask(id, changes);
+    } else {
+      // 'forward': update this task and all open future siblings
+      const task = await getTask(id);
+      if (!task) return;
+      const rootId = task.recurringParentId ?? task.id;
+      const fromWhen = (task.when && task.when !== 'someday') ? task.when as string : '';
+      await dbUpdateTaskForward(id, rootId, fromWhen, changes);
+    }
     await get().refreshTasks();
   },
 

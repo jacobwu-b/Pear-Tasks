@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Modal from '../common/Modal';
 import { useTaskStore } from '../../store/taskStore';
-import type { WhenValue } from '../../types';
+import type { WhenValue, RecurrenceConfig } from '../../types';
+import RecurrencePicker from './RecurrencePicker';
 
 interface NewTaskFormProps {
   open: boolean;
@@ -27,6 +28,7 @@ function NewTaskFormBody({ onClose }: { onClose: () => void }) {
   const [deadline, setDeadline] = useState('');
   const [tagsRaw, setTagsRaw] = useState('');
   const [projectId, setProjectId] = useState<string>('');
+  const [recurrence, setRecurrence] = useState<RecurrenceConfig | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const titleRef = useRef<HTMLInputElement>(null);
 
@@ -68,6 +70,7 @@ function NewTaskFormBody({ onClose }: { onClose: () => void }) {
       deadline: deadline || undefined,
       tags: tags.length ? tags : undefined,
       projectId: projectId || undefined,
+      recurrence: recurrence ?? undefined,
     });
     onClose();
   };
@@ -185,6 +188,8 @@ function NewTaskFormBody({ onClose }: { onClose: () => void }) {
               />
             </div>
           </div>
+
+          <RecurrencePicker value={recurrence} onChange={setRecurrence} />
 
           <div>
             <label className="text-xs font-semibold uppercase tracking-wide block mb-1" style={labelStyle}>
