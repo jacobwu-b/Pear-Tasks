@@ -8,6 +8,7 @@ import {
   getRecurringFamily,
 } from '../../src/db/operations';
 import type { RecurrenceConfig } from '../../src/types';
+import { getLocalTodayDateString } from '../../src/lib/dates';
 import { clearDatabase } from '../helpers';
 
 // Fixed reference date used in tests so results are deterministic.
@@ -47,13 +48,24 @@ describe('spawnNextRecurrence', () => {
     expect(result.data).toBeNull();
   });
 
-  it('returns ok(null) when the task has no when date', async () => {
+  it('spawns from today when the task has no when date', async () => {
+    // A recurring task without a scheduled date should still spawn a next
+    // instance when completed, using today as the reference point.
     const { data: task } = await createTask('Recurring without date', {
       recurrence: dailyConfig,
     });
     const result = await spawnNextRecurrence(task!);
     expect(result.error).toBeNull();
-    expect(result.data).toBeNull();
+    // Should have spawned for tomorrow (daily from today).
+    // Use getLocalTodayDateString to match the same local-clock logic used in
+    // spawnNextRecurrence so the assertion is timezone-safe.
+    expect(result.data).not.toBeNull();
+    const todayLocal = getLocalTodayDateString();
+    const [ty, tm, td] = todayLocal.split('-').map(Number);
+    const tomorrowDate = new Date(ty, tm - 1, td + 1);
+    const tomorrowStr = `${tomorrowDate.getFullYear()}-${String(tomorrowDate.getMonth() + 1).padStart(2, '0')}-${String(tomorrowDate.getDate()).padStart(2, '0')}`;
+    expect(result.data!.when).toBe(tomorrowStr);
+    expect(result.data!.status).toBe('open');
   });
 
   it('creates the next day for a daily recurring task', async () => {

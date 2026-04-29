@@ -511,11 +511,19 @@ export async function getTaskDependencies(taskId: string): Promise<DependencyEdg
  * no recurrence config).
  */
 export async function spawnNextRecurrence(completedTask: Task): Promise<Result<Task | null>> {
-  if (!completedTask.recurrence || !completedTask.when || completedTask.when === 'someday') {
+  if (!completedTask.recurrence) {
     return ok(null);
   }
 
-  const nextDate = computeNextOccurrence(completedTask.recurrence, completedTask.when as string);
+  // Use the task's scheduled date as the reference point for "next occurrence".
+  // If the task has no date (null) or is marked someday, fall back to today so
+  // that completion still spawns a sensible next instance.
+  const fromDate =
+    completedTask.when && completedTask.when !== 'someday'
+      ? (completedTask.when as string)
+      : getLocalTodayDateString();
+
+  const nextDate = computeNextOccurrence(completedTask.recurrence, fromDate);
   if (!nextDate) return ok(null);
 
   const maxOrder = await db.tasks.orderBy('sortOrder').last();
