@@ -258,6 +258,35 @@ export function computeNextOccurrence(
     const rule = new RRule(opts);
     const after = rule.after(dtstart, false /* exclusive */);
     nextDateStr = after ? utcDateToString(after) : null;
+
+    // Special case: weekly rule with BOTH Saturday (6) and Sunday (0).
+    //
+    // Sat+Sun form a single "weekend unit" in task semantics — completing the
+    // Saturday instance should advance to next weekend's Saturday, not the same
+    // weekend's Sunday. Rrule doesn't know about this coupling, so when fromDate
+    // is a Saturday and the computed next is the immediately following Sunday
+    // (still within the same weekend), we ask rrule for one more step to land
+    // on the following Saturday instead.
+    //
+    // This correctly handles interval > 1 because we delegate back to rrule
+    // rather than adding a fixed number of days.
+    if (
+      config.frequency === 'weekly' &&
+      config.daysOfWeek.includes(6) &&
+      config.daysOfWeek.includes(0) &&
+      nextDateStr
+    ) {
+      const fromDow = utcMidnight(fromDate).getUTCDay(); // 0=Sun … 6=Sat
+      if (fromDow === 6) {
+        const nextDow = utcMidnight(nextDateStr).getUTCDay();
+        if (nextDow === 0) {
+          // nextDateStr is the same-weekend Sunday — skip past it
+          const sundayMidnight = utcMidnight(nextDateStr);
+          const skipAfter = rule.after(sundayMidnight, false);
+          nextDateStr = skipAfter ? utcDateToString(skipAfter) : null;
+        }
+      }
+    }
   }
 
   if (!nextDateStr) return null;

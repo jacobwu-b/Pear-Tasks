@@ -81,10 +81,30 @@ describe('computeNextOccurrence', () => {
       expect(computeNextOccurrence(cfg, '2026-04-13')).toBe('2026-04-27');
     });
 
-    it('returns weekends (Sat=6, Sun=0) correctly', () => {
+    it('returns weekends (Sat=6, Sun=0) correctly from a non-weekend day', () => {
       // from Friday Apr 17, next weekend day is Saturday Apr 18
       const cfg = weekly([6, 0] as DayOfWeek[]);
       expect(computeNextOccurrence(cfg, '2026-04-17')).toBe('2026-04-18');
+    });
+
+    it('advances Sat+Sun rule from Saturday to the NEXT weekend Saturday, not same-weekend Sunday', () => {
+      // The weekend (Sat+Sun) is a single unit in task semantics.
+      // Completing Saturday Apr 18 should land on next Saturday Apr 25, not Apr 19 Sunday.
+      const cfg = weekly([6, 0] as DayOfWeek[]);
+      expect(computeNextOccurrence(cfg, '2026-04-18')).toBe('2026-04-25');
+    });
+
+    it('advances Sat+Sun rule from Sunday to the following Saturday', () => {
+      // Completing Sunday Apr 19 should land on Saturday Apr 25 (already correct via rrule).
+      const cfg = weekly([6, 0] as DayOfWeek[]);
+      expect(computeNextOccurrence(cfg, '2026-04-19')).toBe('2026-04-25');
+    });
+
+    it('respects interval > 1 for Sat+Sun weekend rule', () => {
+      // Every 2 weeks on weekends — from Saturday Apr 18, next is Saturday May 2
+      // (skips the immediately following Sunday AND the following single-week weekend)
+      const cfg = weekly([6, 0] as DayOfWeek[], 2);
+      expect(computeNextOccurrence(cfg, '2026-04-18')).toBe('2026-05-02');
     });
   });
 
