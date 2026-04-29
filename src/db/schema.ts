@@ -38,6 +38,21 @@ export class PearDatabase extends Dexie {
           if (a.deletedAt === undefined) a.deletedAt = null;
         });
       });
+
+    // v3: add recurring task support. Index recurringParentId on tasks so we can
+    // efficiently query all instances of a recurring task. Backfill existing
+    // tasks with recurrence=null and recurringParentId=null.
+    this.version(3)
+      .stores({
+        tasks:
+          'id, projectId, areaId, status, when, deadline, sortOrder, deletedAt, *tags, recurringParentId',
+      })
+      .upgrade(async (tx) => {
+        await tx.table('tasks').toCollection().modify((t: Task) => {
+          if (t.recurrence === undefined) t.recurrence = null;
+          if (t.recurringParentId === undefined) t.recurringParentId = null;
+        });
+      });
   }
 }
 

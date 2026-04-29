@@ -6,10 +6,13 @@ import { useResolvedDeps } from '../../hooks/useResolvedDeps';
 import ChecklistEditor from './ChecklistEditor';
 import TagEditor from './TagEditor';
 import DependencySection from '../dependencies/DependencySection';
+import RecurrencePicker from './RecurrencePicker';
+import EditRecurrenceDialog from '../common/EditRecurrenceDialog';
+import type { RecurrenceConfig } from '../../types';
 
 export default function TaskDetail() {
   const { setSelectedTaskId } = useUiStore();
-  const { updateTaskField, completeTask, cancelTask, reopenTask, deleteTask } = useTaskStore();
+  const { updateTaskField, completeTask, cancelTask, reopenTask, deleteTask, updateTaskRecurrence } = useTaskStore();
 
   const task = useSelectedTask();
 
@@ -21,6 +24,11 @@ export default function TaskDetail() {
   const [notes, setNotes] = useState('');
   const [syncedTaskId, setSyncedTaskId] = useState<string | null>(null);
   const titleRef = useRef<HTMLInputElement>(null);
+
+  // Recurrence edit state — when the user applies a new rule on an already-recurring
+  // task we show a dialog asking "this only" vs "this and following".
+  const [pendingRecurrence, setPendingRecurrence] = useState<RecurrenceConfig | null | undefined>(undefined);
+  const recurrenceDialogOpen = pendingRecurrence !== undefined;
 
   if (task && task.id !== syncedTaskId) {
     // React allows setState during render when it's conditional on a prop
@@ -57,6 +65,36 @@ export default function TaskDetail() {
   const handleTagsChange = async (tags: string[]) => {
     if (!task) return;
     await updateTaskField(task.id, { tags });
+  };
+
+  // Called by RecurrencePicker when the user hits Apply.
+  // If the task is already recurring, show the scope dialog first.
+  const handleRecurrenceChange = (newConfig: RecurrenceConfig | null) => {
+    if (!task) return;
+    const wasRecurring = task.recurrence !== null;
+    if (wasRecurring) {
+      // Defer the save until the user picks a scope in the dialog.
+      setPendingRecurrence(newConfig);
+    } else {
+      // Brand-new recurrence — no siblings to worry about.
+      void updateTaskRecurrence(task.id, newConfig, 'this');
+    }
+  };
+
+  const handleEditThis = () => {
+    if (!task || pendingRecurrence === undefined) return;
+    void updateTaskRecurrence(task.id, pendingRecurrence, 'this');
+    setPendingRecurrence(undefined);
+  };
+
+  const handleEditForward = () => {
+    if (!task || pendingRecurrence === undefined) return;
+    void updateTaskRecurrence(task.id, pendingRecurrence, 'forward');
+    setPendingRecurrence(undefined);
+  };
+
+  const handleRecurrenceDialogCancel = () => {
+    setPendingRecurrence(undefined);
   };
 
   const handleComplete = async () => {
@@ -208,6 +246,9 @@ export default function TaskDetail() {
           />
         </div>
 
+        {/* Recurrence */}
+        <RecurrencePicker value={task.recurrence} onChange={handleRecurrenceChange} />
+
         {/* Tags */}
         <TagEditor tags={task.tags} onChange={handleTagsChange} />
 
@@ -240,6 +281,14 @@ export default function TaskDetail() {
         {/* Checklist */}
         <ChecklistEditor taskId={task.id} />
       </div>
+
+      {/* Recurrence scope dialog */}
+      <EditRecurrenceDialog
+        open={recurrenceDialogOpen}
+        onEditThis={handleEditThis}
+        onEditForward={handleEditForward}
+        onCancel={handleRecurrenceDialogCancel}
+      />
 
       {/* Actions footer */}
       <div

@@ -3,6 +3,7 @@ import type { Task } from '../../types';
 import { useTaskStore } from '../../store/taskStore';
 import { useUiStore } from '../../store/uiStore';
 import { getLocalTodayDateString, getLocalTomorrowDateString } from '../../lib/dates';
+import RecurrenceBadge from './RecurrenceBadge';
 
 interface TaskRowProps {
   task: Task;
@@ -148,6 +149,11 @@ export default function TaskRow({ task, blockedByCount = 0 }: TaskRowProps) {
           >
             {task.title}
           </span>
+
+          {/* Recurrence indicator */}
+          {task.recurrence && (
+            <RecurrenceBadge config={task.recurrence} compact />
+          )}
         </div>
 
         {/* Metadata row */}

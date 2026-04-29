@@ -1,12 +1,14 @@
 import { db } from './schema';
 import { wouldCreateCycle, getBlockedTaskIds } from './graph';
 import { getLocalTodayDateString } from '../lib/dates';
+import { computeNextOccurrence } from '../lib/recurrence';
 import type {
   Area,
   Project,
   Task,
   ChecklistItem,
   DependencyEdge,
+  RecurrenceConfig,
 } from '../types';
 
 type Result<T> = { data: T; error: null } | { data: null; error: string };
@@ -137,7 +139,9 @@ export async function getProject(id: string): Promise<Project | undefined> {
 
 export async function createTask(
   title: string,
-  options: Partial<Pick<Task, 'projectId' | 'areaId' | 'when' | 'deadline' | 'tags' | 'notes'>> = {}
+  options: Partial<
+    Pick<Task, 'projectId' | 'areaId' | 'when' | 'deadline' | 'tags' | 'notes' | 'recurrence' | 'recurringParentId'>
+  > = {}
 ): Promise<Result<Task>> {
   const maxOrder = await db.tasks.orderBy('sortOrder').last();
   const task: Task = {
@@ -154,6 +158,8 @@ export async function createTask(
     createdAt: Date.now(),
     completedAt: null,
     deletedAt: null,
+    recurrence: options.recurrence ?? null,
+    recurringParentId: options.recurringParentId ?? null,
   };
   await db.tasks.add(task);
   return ok(task);
@@ -490,6 +496,115 @@ export async function getTaskDependencies(taskId: string): Promise<DependencyEdg
     const peerId = e.fromTaskId === taskId ? e.toTaskId : e.fromTaskId;
     return !deletedPeerIds.has(peerId);
   });
+}
+
+// ── Recurring Tasks ────────────────────────────────────────────────
+
+/**
+ * When a recurring task is completed, spawn the next open instance.
+ *
+ * The new task is a copy of the completed task with a fresh id, open status,
+ * and the next `when` date computed from the recurrence rule. Dependency edges
+ * are intentionally NOT copied — the new instance starts with a clean slate.
+ *
+ * Returns ok(null) if there is no next occurrence (end date reached, or
+ * no recurrence config).
+ */
+export async function spawnNextRecurrence(completedTask: Task): Promise<Result<Task | null>> {
+  if (!completedTask.recurrence || !completedTask.when || completedTask.when === 'someday') {
+    return ok(null);
+  }
+
+  const nextDate = computeNextOccurrence(completedTask.recurrence, completedTask.when as string);
+  if (!nextDate) return ok(null);
+
+  const maxOrder = await db.tasks.orderBy('sortOrder').last();
+  const newTask: Task = {
+    id: generateId(),
+    title:            completedTask.title,
+    notes:            completedTask.notes,
+    status:           'open',
+    when:             nextDate,
+    deadline:         completedTask.deadline,
+    tags:             [...completedTask.tags],
+    projectId:        completedTask.projectId,
+    areaId:           completedTask.areaId,
+    sortOrder:        (maxOrder?.sortOrder ?? -1) + 1,
+    createdAt:        Date.now(),
+    completedAt:      null,
+    deletedAt:        null,
+    recurrence:       completedTask.recurrence,
+    // Chain: always point back to the root ancestor, not the intermediate instance.
+    recurringParentId: completedTask.recurringParentId ?? completedTask.id,
+  };
+
+  await db.tasks.add(newTask);
+  return ok(newTask);
+}
+
+/**
+ * Complete a task and, if it recurs, spawn the next open instance.
+ *
+ * Completion and spawn are sequential operations. If spawn fails after a
+ * successful completion the task remains completed — the user can manually
+ * create the next occurrence. We prefer simplicity over strict atomicity here
+ * because completion is always the primary intent.
+ */
+export async function completeTaskWithRecurrence(
+  id: string,
+): Promise<Result<{ completed: Task; spawned: Task | null }>> {
+  // Complete the task
+  await db.tasks.update(id, { status: 'completed', completedAt: Date.now() });
+  const completed = await db.tasks.get(id);
+  if (!completed) return err('Task not found after update');
+
+  // Spawn next occurrence if recurring
+  const spawnResult = await spawnNextRecurrence(completed);
+  return ok({ completed, spawned: spawnResult.data });
+}
+
+/**
+ * Update the recurrence rule on the given task and all open sibling instances
+ * that share the same root and are scheduled on or after `fromWhen`.
+ *
+ * Used for the "edit this and following occurrences" action.
+ *
+ * `rootId` is the recurringParentId of the chain, or the task's own id if it
+ * is itself the root (recurringParentId === null).
+ */
+export async function updateRecurrenceForward(
+  taskId: string,
+  rootId: string,
+  fromWhen: string,
+  recurrence: RecurrenceConfig | null,
+): Promise<Result<void>> {
+  // Update the task being edited directly (it may be the root, which has
+  // recurringParentId === null and therefore won't match the index query).
+  await db.tasks.update(taskId, { recurrence });
+
+  // Update all open siblings at or after fromWhen.
+  await db.tasks
+    .where('recurringParentId')
+    .equals(rootId)
+    .filter(
+      (t) =>
+        t.id !== taskId &&
+        t.status === 'open' &&
+        t.when !== null &&
+        t.when !== 'someday' &&
+        (t.when as string) >= fromWhen,
+    )
+    .modify({ recurrence });
+
+  return ok(undefined);
+}
+
+/**
+ * Return all tasks (including completed and deleted) that belong to a
+ * recurring task chain identified by its root id.
+ */
+export async function getRecurringFamily(rootId: string): Promise<Task[]> {
+  return db.tasks.where('recurringParentId').equals(rootId).toArray();
 }
 
 // ── Trash cleanup ──────────────────────────────────────────────────
