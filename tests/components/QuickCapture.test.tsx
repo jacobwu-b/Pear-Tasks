@@ -83,17 +83,15 @@ describe('QuickCapture', () => {
 
     const input = screen.getByTestId('quick-capture-input') as HTMLInputElement;
     await act(async () => {
-      fireEvent.change(input, { target: { value: 'Review PRD 2026-05-01' } });
+      fireEvent.change(input, { target: { value: 'Review PRD 2030-01-01' } });
       fireEvent.keyDown(input, { key: 'Enter' });
       await new Promise((r) => setTimeout(r, 30));
     });
 
-    // 2026-05-01 is a future date, so the task lives in Upcoming — use
-    // getUpcomingTasks to verify.
     const { getUpcomingTasks } = await import('../../src/db/operations');
     const upcoming = await getUpcomingTasks();
     expect(upcoming).toHaveLength(1);
     expect(upcoming[0].title).toBe('Review PRD');
-    expect(upcoming[0].when).toBe('2026-05-01');
+    expect(upcoming[0].when).toBe('2030-01-01');
   });
 });
