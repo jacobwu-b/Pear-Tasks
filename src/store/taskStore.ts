@@ -29,6 +29,7 @@ import {
   createTask as dbCreateTask,
   softDeleteTask as dbSoftDeleteTask,
   restoreTask as dbRestoreTask,
+  updateProject as dbUpdateProject,
   softDeleteProject as dbSoftDeleteProject,
   restoreProject as dbRestoreProject,
   getDeletedItems,
@@ -111,6 +112,8 @@ interface TaskState {
     changes: Partial<Omit<Task, 'id' | 'createdAt'>>,
     scope: 'this' | 'forward',
   ) => Promise<void>;
+  completeProject: (id: string) => Promise<void>;
+  cancelProject: (id: string) => Promise<void>;
   deleteProject: (id: string) => Promise<void>;
   restoreProject: (id: string) => Promise<void>;
 
@@ -239,7 +242,8 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   resolvedDepsByTaskId: {},
 
   loadSidebarData: async () => {
-    const [areas, projects] = await Promise.all([getAreas(), getProjects()]);
+    const [areas, allProjects] = await Promise.all([getAreas(), getProjects()]);
+    const projects = allProjects.filter(p => p.status === 'active' || p.status === 'someday');
     set({ areas, projects });
   },
 
@@ -306,6 +310,26 @@ export const useTaskStore = create<TaskState>((set, get) => ({
 
   restoreTask: async (id) => {
     await dbRestoreTask(id);
+    await get().refreshTasks();
+  },
+
+  completeProject: async (id) => {
+    await dbUpdateProject(id, { status: 'completed' });
+    const current = useUiStore.getState().sidebarView;
+    if (typeof current === 'object' && current.type === 'project' && current.projectId === id) {
+      useUiStore.getState().setSidebarView('inbox');
+    }
+    await get().loadSidebarData();
+    await get().refreshTasks();
+  },
+
+  cancelProject: async (id) => {
+    await dbUpdateProject(id, { status: 'canceled' });
+    const current = useUiStore.getState().sidebarView;
+    if (typeof current === 'object' && current.type === 'project' && current.projectId === id) {
+      useUiStore.getState().setSidebarView('inbox');
+    }
+    await get().loadSidebarData();
     await get().refreshTasks();
   },
 

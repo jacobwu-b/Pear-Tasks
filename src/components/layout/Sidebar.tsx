@@ -420,27 +420,75 @@ function ProjectItem({
   active: boolean;
   onSelect: () => void;
 }) {
+  const [hovered, setHovered] = useState(false);
+  const { completeProject, cancelProject, deleteProject } = useTaskStore();
+
   return (
-    <button
-      onClick={onSelect}
-      data-testid={`sidebar-project-${project.id}`}
-      className="flex items-center gap-2.5 w-full px-2.5 py-1.5 rounded-md text-sm transition-colors cursor-pointer"
+    <div
+      className="flex items-center gap-0 rounded-md"
       style={{
-        color: active ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
-        backgroundColor: active ? 'var(--color-surface-active)' : 'transparent',
+        backgroundColor: active
+          ? 'var(--color-surface-active)'
+          : hovered
+          ? 'var(--color-surface-hover)'
+          : 'transparent',
       }}
-      onMouseEnter={(e) => {
-        if (!active) e.currentTarget.style.backgroundColor = 'var(--color-surface-hover)';
-      }}
-      onMouseLeave={(e) => {
-        if (!active) e.currentTarget.style.backgroundColor = 'transparent';
-      }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
     >
-      <span style={{ color: active ? 'var(--color-accent)' : 'var(--color-text-tertiary)' }}>
-        <FolderIcon />
-      </span>
-      {project.title}
-    </button>
+      <button
+        onClick={onSelect}
+        data-testid={`sidebar-project-${project.id}`}
+        className="flex items-center gap-2.5 flex-1 min-w-0 px-2.5 py-1.5 rounded-md text-sm transition-colors cursor-pointer"
+        style={{ color: active ? 'var(--color-text-primary)' : 'var(--color-text-secondary)' }}
+      >
+        <span style={{ color: active ? 'var(--color-accent)' : 'var(--color-text-tertiary)', flexShrink: 0 }}>
+          <FolderIcon />
+        </span>
+        <span className="truncate">{project.title}</span>
+      </button>
+
+      {hovered && (
+        <div className="flex items-center gap-0.5 pr-1.5 shrink-0">
+          <button
+            onClick={(e) => { e.stopPropagation(); completeProject(project.id); }}
+            data-testid={`sidebar-project-complete-${project.id}`}
+            title="Complete project"
+            aria-label="Complete project"
+            className="p-1 rounded cursor-pointer"
+            style={{ color: 'var(--color-text-tertiary)' }}
+          >
+            <svg viewBox="0 0 16 16" fill="currentColor" className="w-3.5 h-3.5">
+              <path fillRule="evenodd" d="M12.854 4.146a.5.5 0 010 .708l-6 6a.5.5 0 01-.708 0l-3-3a.5.5 0 01.708-.708L6.5 9.793l5.646-5.647a.5.5 0 01.708 0z" clipRule="evenodd" />
+            </svg>
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); cancelProject(project.id); }}
+            data-testid={`sidebar-project-cancel-${project.id}`}
+            title="Cancel project"
+            aria-label="Cancel project"
+            className="p-1 rounded cursor-pointer"
+            style={{ color: 'var(--color-text-tertiary)' }}
+          >
+            <svg viewBox="0 0 16 16" fill="currentColor" className="w-3.5 h-3.5">
+              <path fillRule="evenodd" d="M4.146 4.146a.5.5 0 01.708 0L8 7.293l3.146-3.147a.5.5 0 01.708.708L8.707 8l3.147 3.146a.5.5 0 01-.708.708L8 8.707l-3.146 3.147a.5.5 0 01-.708-.708L7.293 8 4.146 4.854a.5.5 0 010-.708z" clipRule="evenodd" />
+            </svg>
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); deleteProject(project.id); }}
+            data-testid={`sidebar-project-delete-${project.id}`}
+            title="Delete project"
+            aria-label="Delete project"
+            className="p-1 rounded cursor-pointer"
+            style={{ color: 'var(--color-text-tertiary)' }}
+          >
+            <svg viewBox="0 0 16 16" fill="currentColor" className="w-3.5 h-3.5">
+              <path d="M6.5 1a1 1 0 00-1 1v.5H3a.5.5 0 000 1h.472l.658 9.211A2 2 0 006.126 14.5h3.748a2 2 0 001.996-1.789L12.528 3.5H13a.5.5 0 000-1h-2.5V2a1 1 0 00-1-1h-3zm3 1.5h-3V2h3v.5z" />
+            </svg>
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 

@@ -1,12 +1,14 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { db } from '../../src/db/schema';
-import { addDependency, createArea, createProject, createTask, updateTask } from '../../src/db/operations';
+import { addDependency, createArea, createProject, createTask, getProjects, updateTask } from '../../src/db/operations';
 import { useTaskStore } from '../../src/store/taskStore';
+import { useUiStore } from '../../src/store/uiStore';
 
 beforeEach(async () => {
   await db.delete();
   await db.open();
   useTaskStore.setState({ areas: [], projects: [], tasks: [], edges: [], trashedProjects: [], currentView: null });
+  useUiStore.setState({ sidebarView: 'inbox', selectedTaskId: null, sidebarCollapsed: false, mobileSidebarOpen: false });
 });
 
 describe('taskStore', () => {
@@ -301,5 +303,103 @@ describe('taskStore', () => {
     // After restore, trash tasks should not contain the project task
     await useTaskStore.getState().loadTasksForView('trash');
     expect(useTaskStore.getState().tasks.map((t) => t.id)).not.toContain(task!.id);
+  });
+
+  // -- completeProject / cancelProject --
+
+  it('completeProject sets status to completed in the DB', async () => {
+    const { data: project } = await createProject('Ship it');
+
+    await useTaskStore.getState().completeProject(project!.id);
+
+    // getProjects() returns non-deleted projects regardless of status
+    const all = await getProjects();
+    const updated = all.find((p) => p.id === project!.id)!;
+    expect(updated.status).toBe('completed');
+    expect(updated.completedAt).toBeGreaterThan(0);
+  });
+
+  it('completeProject removes project from sidebar', async () => {
+    const { data: project } = await createProject('Ship it');
+    await useTaskStore.getState().loadSidebarData();
+    expect(useTaskStore.getState().projects).toHaveLength(1);
+
+    await useTaskStore.getState().completeProject(project!.id);
+
+    expect(useTaskStore.getState().projects).toHaveLength(0);
+  });
+
+  it('completeProject navigates to inbox when the completed project is the active view', async () => {
+    const { data: project } = await createProject('Active View Project');
+    useUiStore.getState().setSidebarView({ type: 'project', projectId: project!.id });
+
+    await useTaskStore.getState().completeProject(project!.id);
+
+    expect(useUiStore.getState().sidebarView).toBe('inbox');
+  });
+
+  it('completeProject does not change the view when a different project is active', async () => {
+    const { data: p1 } = await createProject('P1');
+    const { data: p2 } = await createProject('P2');
+    useUiStore.getState().setSidebarView({ type: 'project', projectId: p2!.id });
+
+    await useTaskStore.getState().completeProject(p1!.id);
+
+    const view = useUiStore.getState().sidebarView;
+    expect(view).toEqual({ type: 'project', projectId: p2!.id });
+  });
+
+  it('cancelProject sets status to canceled in the DB', async () => {
+    const { data: project } = await createProject('Drop it');
+
+    await useTaskStore.getState().cancelProject(project!.id);
+
+    const all = await getProjects();
+    const updated = all.find((p) => p.id === project!.id)!;
+    expect(updated.status).toBe('canceled');
+  });
+
+  it('cancelProject removes project from sidebar', async () => {
+    const { data: project } = await createProject('Drop it');
+    await useTaskStore.getState().loadSidebarData();
+    expect(useTaskStore.getState().projects).toHaveLength(1);
+
+    await useTaskStore.getState().cancelProject(project!.id);
+
+    expect(useTaskStore.getState().projects).toHaveLength(0);
+  });
+
+  it('cancelProject navigates to inbox when the canceled project is the active view', async () => {
+    const { data: project } = await createProject('Active View Project');
+    useUiStore.getState().setSidebarView({ type: 'project', projectId: project!.id });
+
+    await useTaskStore.getState().cancelProject(project!.id);
+
+    expect(useUiStore.getState().sidebarView).toBe('inbox');
+  });
+
+  it('loadSidebarData excludes completed projects from the sidebar', async () => {
+    const { data: active } = await createProject('Active');
+    const { data: completed } = await createProject('Done');
+    await useTaskStore.getState().completeProject(completed!.id);
+    // Reset and reload to verify the filter is applied fresh
+    useTaskStore.setState({ projects: [] });
+    await useTaskStore.getState().loadSidebarData();
+
+    const ids = useTaskStore.getState().projects.map((p) => p.id);
+    expect(ids).toContain(active!.id);
+    expect(ids).not.toContain(completed!.id);
+  });
+
+  it('loadSidebarData excludes canceled projects from the sidebar', async () => {
+    const { data: active } = await createProject('Active');
+    const { data: canceled } = await createProject('Dropped');
+    await useTaskStore.getState().cancelProject(canceled!.id);
+    useTaskStore.setState({ projects: [] });
+    await useTaskStore.getState().loadSidebarData();
+
+    const ids = useTaskStore.getState().projects.map((p) => p.id);
+    expect(ids).toContain(active!.id);
+    expect(ids).not.toContain(canceled!.id);
   });
 });
