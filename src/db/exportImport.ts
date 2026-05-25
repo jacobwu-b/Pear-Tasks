@@ -8,7 +8,9 @@ import type {
   ProjectTemplate,
 } from '../types';
 
-const CURRENT_VERSION = 2;
+const CURRENT_VERSION = 3;
+// Older versions we still know how to import by upgrading the payload in memory.
+const SUPPORTED_VERSIONS: readonly number[] = [2, 3];
 
 export interface PearExport {
   app: 'pear-tasks';
@@ -72,10 +74,10 @@ export function validateExport(data: unknown): ImportResult {
   if (typeof obj.version !== 'number') {
     return { ok: false, error: 'Invalid file: missing version number.' };
   }
-  if (obj.version !== CURRENT_VERSION) {
+  if (!SUPPORTED_VERSIONS.includes(obj.version)) {
     return {
       ok: false,
-      error: `Version mismatch: file is v${obj.version}, app expects v${CURRENT_VERSION}. Cannot import.`,
+      error: `Version mismatch: file is v${obj.version}, app supports v${SUPPORTED_VERSIONS.join(', v')}. Cannot import.`,
     };
   }
   if (!obj.tables || typeof obj.tables !== 'object') {
@@ -91,16 +93,37 @@ export function validateExport(data: unknown): ImportResult {
   return { ok: true };
 }
 
+/**
+ * Bring a payload from any SUPPORTED_VERSIONS up to CURRENT_VERSION in memory.
+ * v2 tasks predate recurrence; default both fields to null to match the Dexie
+ * v2→v3 upgrade hook in schema.ts.
+ */
+function upgradePayload(data: PearExport): PearExport {
+  if (data.version === CURRENT_VERSION) return data;
+  const tasks = data.tables.tasks.map((t) => ({
+    ...t,
+    recurrence: t.recurrence ?? null,
+    recurringParentId: t.recurringParentId ?? null,
+  }));
+  return {
+    ...data,
+    version: CURRENT_VERSION,
+    tables: { ...data.tables, tasks },
+  };
+}
+
 export async function importDatabase(data: PearExport): Promise<ImportResult> {
   const validation = validateExport(data);
   if (!validation.ok) return validation;
+
+  const upgraded = upgradePayload(data);
 
   try {
     await db.transaction('rw', db.tables, async () => {
       for (const table of db.tables) {
         await table.clear();
       }
-      const t = data.tables;
+      const t = upgraded.tables;
       await db.areas.bulkAdd(t.areas);
       await db.projects.bulkAdd(t.projects);
       await db.tasks.bulkAdd(t.tasks);

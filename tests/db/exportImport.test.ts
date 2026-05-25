@@ -8,6 +8,8 @@ import {
   type PearExport,
 } from '../../src/db/exportImport';
 import { createTask, createProject, createArea, getAreas, getTask } from '../../src/db/operations';
+import { db } from '../../src/db/schema';
+import type { RecurrenceConfig } from '../../src/types';
 import { clearDatabase } from '../helpers';
 
 afterEach(() => {
@@ -26,7 +28,7 @@ describe('exportDatabase', () => {
 
     const data = await exportDatabase();
     expect(data.app).toBe('pear-tasks');
-    expect(data.version).toBe(2);
+    expect(data.version).toBe(3);
     expect(data.exportedAt).toBeTruthy();
     expect(data.tables.areas).toHaveLength(1);
     expect(data.tables.projects).toHaveLength(1);
@@ -50,13 +52,13 @@ describe('validateExport', () => {
   });
 
   it('rejects wrong app identifier', () => {
-    expect(validateExport({ app: 'other-app', version: 2, tables: {} })).toEqual({
+    expect(validateExport({ app: 'other-app', version: 3, tables: {} })).toEqual({
       ok: false,
       error: expect.stringContaining('not a Pear Tasks export'),
     });
   });
 
-  it('rejects version mismatch', () => {
+  it('rejects version mismatch on unknown versions', () => {
     const result = validateExport({
       app: 'pear-tasks',
       version: 99,
@@ -69,14 +71,40 @@ describe('validateExport', () => {
     if (!result.ok) expect(result.error).toContain('Version mismatch');
   });
 
+  it('rejects v1 envelopes', () => {
+    const result = validateExport({
+      app: 'pear-tasks',
+      version: 1,
+      tables: {
+        areas: [], projects: [], tasks: [], checklistItems: [],
+        dependencyEdges: [], templates: [],
+      },
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain('Version mismatch');
+  });
+
   it('rejects missing tables', () => {
-    expect(validateExport({ app: 'pear-tasks', version: 2, tables: {} })).toEqual({
+    expect(validateExport({ app: 'pear-tasks', version: 3, tables: {} })).toEqual({
       ok: false,
       error: expect.stringContaining('missing or invalid table'),
     });
   });
 
-  it('accepts a valid export', () => {
+  it('accepts a v3 export', () => {
+    const valid = {
+      app: 'pear-tasks',
+      version: 3,
+      exportedAt: new Date().toISOString(),
+      tables: {
+        areas: [], projects: [], tasks: [], checklistItems: [],
+        dependencyEdges: [], templates: [],
+      },
+    };
+    expect(validateExport(valid)).toEqual({ ok: true });
+  });
+
+  it('accepts a v2 export for backward compatibility', () => {
     const valid = {
       app: 'pear-tasks',
       version: 2,
@@ -99,7 +127,7 @@ describe('importDatabase', () => {
     // Build an export with different data.
     const importData: PearExport = {
       app: 'pear-tasks',
-      version: 2,
+      version: 3,
       exportedAt: new Date().toISOString(),
       tables: {
         areas: [{
@@ -124,6 +152,8 @@ describe('importDatabase', () => {
           createdAt: Date.now(),
           completedAt: null,
           deletedAt: null,
+          recurrence: null,
+          recurringParentId: null,
         }],
         checklistItems: [],
         dependencyEdges: [],
@@ -142,6 +172,80 @@ describe('importDatabase', () => {
     const task = await getTask('imported-task-1');
     expect(task).toBeDefined();
     expect(task!.title).toBe('Imported Task');
+  });
+
+  it('upgrades v2 envelopes by defaulting recurrence fields to null', async () => {
+    // v2 task literal — no recurrence or recurringParentId fields.
+    const v2Import = {
+      app: 'pear-tasks',
+      version: 2,
+      exportedAt: new Date().toISOString(),
+      tables: {
+        areas: [],
+        projects: [],
+        tasks: [{
+          id: 'v2-task-1',
+          title: 'Legacy Task',
+          notes: '',
+          status: 'open',
+          when: null,
+          deadline: null,
+          tags: [],
+          projectId: null,
+          areaId: null,
+          sortOrder: 0,
+          createdAt: Date.now(),
+          completedAt: null,
+          deletedAt: null,
+        }],
+        checklistItems: [],
+        dependencyEdges: [],
+        templates: [],
+      },
+    } as unknown as PearExport;
+
+    const result = await importDatabase(v2Import);
+    expect(result).toEqual({ ok: true });
+
+    const task = await getTask('v2-task-1');
+    expect(task).toBeDefined();
+    expect(task!.recurrence).toBeNull();
+    expect(task!.recurringParentId).toBeNull();
+  });
+
+  it('round-trips a non-trivial recurrence config through export and import', async () => {
+    await createTask('Weekly review');
+    // Fetch the task to get its generated id, then attach a recurrence rule.
+    const { getInboxTasks } = await import('../../src/db/operations');
+    const inbox = await getInboxTasks();
+    const created = inbox[0];
+
+    const recurrence: RecurrenceConfig = {
+      frequency: 'weekly',
+      interval: 1,
+      daysOfWeek: [1, 3, 5], // Mon/Wed/Fri
+      monthlySpec: null,
+      month: null,
+      endDate: '2026-12-31',
+    };
+    await db.tasks.update(created.id, {
+      recurrence,
+      recurringParentId: null,
+    });
+
+    const exported = await exportDatabase();
+    expect(exported.version).toBe(3);
+    const exportedTask = exported.tables.tasks.find((t) => t.id === created.id);
+    expect(exportedTask?.recurrence).toEqual(recurrence);
+
+    await clearDatabase();
+    const result = await importDatabase(exported);
+    expect(result).toEqual({ ok: true });
+
+    const reimported = await getTask(created.id);
+    expect(reimported).toBeDefined();
+    expect(reimported!.recurrence).toEqual(recurrence);
+    expect(reimported!.recurringParentId).toBeNull();
   });
 
   it('rejects invalid data without modifying the database', async () => {
