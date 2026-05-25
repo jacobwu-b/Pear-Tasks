@@ -1,4 +1,9 @@
 import { create } from 'zustand';
+import {
+  getSyncFileSnapshot,
+  type SyncFileSnapshot,
+  type SyncError,
+} from '../db/syncFile';
 
 export type SidebarView =
   | 'inbox'
@@ -27,6 +32,12 @@ interface UiState {
   quickCaptureOpen: boolean;
   /** Full New Task form visibility */
   newTaskFormOpen: boolean;
+  /** Sync file: persisted metadata for the connected on-disk JSON file. */
+  syncFile: SyncFileSnapshot | null;
+  /** Sync file: last error from a connect/save attempt, if any. */
+  syncError: SyncError | null;
+  /** Sync file: true while a save is in flight. */
+  syncSaving: boolean;
 
   setSidebarView: (view: SidebarView) => void;
   setSelectedTaskId: (id: string | null) => void;
@@ -41,6 +52,10 @@ interface UiState {
   closeQuickCapture: () => void;
   openNewTaskForm: () => void;
   closeNewTaskForm: () => void;
+  setSyncFile: (file: SyncFileSnapshot | null) => void;
+  setSyncError: (error: SyncError | null) => void;
+  setSyncSaving: (saving: boolean) => void;
+  hydrateSyncFile: () => Promise<void>;
 }
 
 export const useUiStore = create<UiState>((set) => ({
@@ -53,6 +68,9 @@ export const useUiStore = create<UiState>((set) => ({
   graphCollapsed: false,
   quickCaptureOpen: false,
   newTaskFormOpen: false,
+  syncFile: null,
+  syncError: null,
+  syncSaving: false,
 
   setSidebarView: (view) => set({ sidebarView: view, selectedTaskId: null }),
   setSelectedTaskId: (id) => set({ selectedTaskId: id }),
@@ -67,4 +85,11 @@ export const useUiStore = create<UiState>((set) => ({
   closeQuickCapture: () => set({ quickCaptureOpen: false }),
   openNewTaskForm: () => set({ newTaskFormOpen: true }),
   closeNewTaskForm: () => set({ newTaskFormOpen: false }),
+  setSyncFile: (file) => set({ syncFile: file }),
+  setSyncError: (error) => set({ syncError: error }),
+  setSyncSaving: (saving) => set({ syncSaving: saving }),
+  hydrateSyncFile: async () => {
+    const snapshot = await getSyncFileSnapshot();
+    set({ syncFile: snapshot });
+  },
 }));

@@ -34,9 +34,15 @@ function App() {
   const deleteTask = useTaskStore((s) => s.deleteTask)
   const updateTaskField = useTaskStore((s) => s.updateTaskField)
 
+  const hydrateSyncFile = useUiStore((s) => s.hydrateSyncFile)
+
   useEffect(() => {
-    Promise.all([seedOnFirstLaunch(), seedBuiltInTemplates()]).then(() => setReady(true))
-  }, [])
+    Promise.all([
+      seedOnFirstLaunch(),
+      seedBuiltInTemplates(),
+      hydrateSyncFile(),
+    ]).then(() => setReady(true))
+  }, [hydrateSyncFile])
 
   const isProjectView = typeof sidebarView === 'object' && sidebarView.type === 'project'
   const anyModalOpen = quickCaptureOpen || newTaskFormOpen || shortcutHelpOpen || searchOpen

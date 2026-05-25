@@ -142,3 +142,23 @@ export interface ProjectTemplate {
   tasks: TemplateTask[];
   edges: TemplateEdge[];
 }
+
+// -- Sync file --
+
+/**
+ * Single-row record (id: 'singleton') holding the persisted FileSystemFileHandle
+ * for the user's on-disk sync file plus bookkeeping for the last save.
+ *
+ * The handle is stored as a structured-cloneable object (Chromium's IndexedDB
+ * preserves it across reloads). Re-acquiring permission may still be required
+ * after a reload — handled by ensurePermission() in src/db/syncFile.ts.
+ */
+export interface SyncFileRecord {
+  id: 'singleton';
+  handle: FileSystemFileHandle;
+  fileName: string;
+  connectedAt: number;
+  /** Monotonic counter bumped on every successful save. Starts at 0. */
+  lastSyncVersion: number;
+  lastSavedAt: number | null;
+}

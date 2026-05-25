@@ -8,7 +8,14 @@ import {
   validateExport,
   type PearExport,
 } from '../../db/exportImport';
+import {
+  connectSyncFile,
+  disconnectSyncFile,
+  isSyncFileSupported,
+  saveToSyncFile,
+} from '../../db/syncFile';
 import { useTaskStore } from '../../store/taskStore';
+import { useUiStore } from '../../store/uiStore';
 
 interface DataManagementProps {
   open: boolean;
@@ -29,6 +36,42 @@ function DataManagementBody({ onClose }: { onClose: () => void }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const loadSidebarData = useTaskStore((s) => s.loadSidebarData);
   const refreshTasks = useTaskStore((s) => s.refreshTasks);
+
+  const syncFile = useUiStore((s) => s.syncFile);
+  const syncError = useUiStore((s) => s.syncError);
+  const syncSaving = useUiStore((s) => s.syncSaving);
+  const setSyncFile = useUiStore((s) => s.setSyncFile);
+  const setSyncError = useUiStore((s) => s.setSyncError);
+  const setSyncSaving = useUiStore((s) => s.setSyncSaving);
+  const supported = isSyncFileSupported();
+
+  const handleConnectSync = async () => {
+    setSyncError(null);
+    const result = await connectSyncFile();
+    if (result.error) {
+      if (result.error.kind !== 'picker-aborted') setSyncError(result.error);
+      return;
+    }
+    setSyncFile(result.data);
+  };
+
+  const handleDisconnectSync = async () => {
+    await disconnectSyncFile();
+    setSyncFile(null);
+    setSyncError(null);
+  };
+
+  const handleSaveSync = async () => {
+    setSyncError(null);
+    setSyncSaving(true);
+    const result = await saveToSyncFile();
+    setSyncSaving(false);
+    if (result.error) {
+      setSyncError(result.error);
+      return;
+    }
+    setSyncFile(result.data);
+  };
 
   const handleExport = async () => {
     setExporting(true);
@@ -101,6 +144,87 @@ function DataManagementBody({ onClose }: { onClose: () => void }) {
       </div>
 
       <div className="px-5 py-4 space-y-5">
+        {/* Sync file */}
+        {supported && (
+          <div data-testid="sync-file-section">
+            <h3 className="text-xs font-semibold uppercase tracking-wide mb-1" style={labelStyle}>
+              Sync File
+            </h3>
+            <p className="text-xs mb-2" style={labelStyle}>
+              Keep a copy of your database in a local JSON file. The file's handle
+              is remembered across reloads so you can save without re-picking it.
+            </p>
+
+            {!syncFile && (
+              <button
+                type="button"
+                onClick={handleConnectSync}
+                data-testid="sync-connect-btn"
+                className="px-4 py-2 rounded-md text-sm font-medium cursor-pointer"
+                style={{
+                  border: '1px solid var(--color-border-secondary)',
+                  color: 'var(--color-text-secondary)',
+                }}
+              >
+                Connect sync file...
+              </button>
+            )}
+
+            {syncFile && (
+              <div className="space-y-2">
+                <p className="text-xs" style={labelStyle} data-testid="sync-file-status">
+                  Connected: <span style={{ color: 'var(--color-text-secondary)' }}>{syncFile.fileName}</span>
+                  {syncFile.lastSavedAt !== null && (
+                    <>
+                      {' · '}saved v{syncFile.lastSyncVersion} at{' '}
+                      {new Date(syncFile.lastSavedAt).toLocaleTimeString()}
+                    </>
+                  )}
+                </p>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={handleSaveSync}
+                    disabled={syncSaving}
+                    data-testid="sync-save-btn"
+                    className="px-3 py-1.5 rounded-md text-sm font-medium cursor-pointer"
+                    style={{
+                      backgroundColor: 'var(--color-accent)',
+                      color: 'var(--color-text-inverse)',
+                      opacity: syncSaving ? 0.6 : 1,
+                    }}
+                  >
+                    {syncSaving ? 'Saving...' : 'Save to sync file'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDisconnectSync}
+                    data-testid="sync-disconnect-btn"
+                    className="px-3 py-1.5 rounded-md text-sm cursor-pointer"
+                    style={{ color: 'var(--color-text-secondary)' }}
+                  >
+                    Disconnect
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {syncError && (
+              <div className="mt-2 space-y-1">
+                <p
+                  className="text-sm"
+                  data-testid="sync-error"
+                  style={{ color: 'var(--color-status-overdue)' }}
+                >
+                  {syncError.kind === 'permission-lost'
+                    ? 'Write permission for the sync file was revoked. Click "Save to sync file" again to re-grant access.'
+                    : syncError.message}
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Export */}
         <div>
           <h3 className="text-xs font-semibold uppercase tracking-wide mb-1" style={labelStyle}>
