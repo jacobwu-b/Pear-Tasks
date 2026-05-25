@@ -6,6 +6,7 @@ import type {
   ChecklistItem,
   DependencyEdge,
   ProjectTemplate,
+  SyncFileRecord,
 } from '../types';
 
 export class PearDatabase extends Dexie {
@@ -15,6 +16,7 @@ export class PearDatabase extends Dexie {
   checklistItems!: Table<ChecklistItem, string>;
   dependencyEdges!: Table<DependencyEdge, string>;
   templates!: Table<ProjectTemplate, string>;
+  syncFile!: Table<SyncFileRecord, string>;
 
   constructor() {
     super('PearDatabase');
@@ -53,6 +55,12 @@ export class PearDatabase extends Dexie {
           if (t.recurringParentId === undefined) t.recurringParentId = null;
         });
       });
+
+    // v4: add syncFile table for storing a persisted FileSystemFileHandle that
+    // points at the user's on-disk sync file. Single-row table keyed by 'singleton'.
+    this.version(4).stores({
+      syncFile: 'id',
+    });
   }
 }
 
