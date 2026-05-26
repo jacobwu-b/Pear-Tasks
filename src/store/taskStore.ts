@@ -112,6 +112,7 @@ interface TaskState {
     changes: Partial<Omit<Task, 'id' | 'createdAt'>>,
     scope: 'this' | 'forward',
   ) => Promise<void>;
+  updateProjectField: (id: string, changes: Partial<Omit<Project, 'id' | 'createdAt'>>) => Promise<void>;
   completeProject: (id: string) => Promise<void>;
   cancelProject: (id: string) => Promise<void>;
   deleteProject: (id: string) => Promise<void>;
@@ -310,6 +311,12 @@ export const useTaskStore = create<TaskState>((set, get) => ({
 
   restoreTask: async (id) => {
     await dbRestoreTask(id);
+    await get().refreshTasks();
+  },
+
+  updateProjectField: async (id, changes) => {
+    await dbUpdateProject(id, changes);
+    await get().loadSidebarData();
     await get().refreshTasks();
   },
 
