@@ -8,6 +8,7 @@ import type { Task } from '../../types';
 import TaskRow from './TaskRow';
 import LinkModeToolbar from '../dependencies/LinkModeToolbar';
 import GraphView from '../projects/GraphView';
+import ProjectHeader from '../projects/ProjectHeader';
 import SaveAsTemplateDialog from '../templates/SaveAsTemplateDialog';
 
 function viewTitle(
@@ -128,15 +129,19 @@ export default function TaskList() {
       <LinkModeToolbar />
 
       {/* Header */}
-      <div className="flex items-center justify-between px-4 pt-4 pb-2">
-        <h1
-          className="text-2xl font-bold"
-          data-testid="view-title"
-          style={{ color: 'var(--color-text-primary)' }}
-        >
-          {title}
-        </h1>
-        <div className="flex items-center gap-2">
+      <div className="flex items-start justify-between gap-4 px-4 pt-4 pb-2">
+        {projectId ? (
+          <ProjectHeader projectId={projectId} />
+        ) : (
+          <h1
+            className="text-2xl font-bold"
+            data-testid="view-title"
+            style={{ color: 'var(--color-text-primary)' }}
+          >
+            {title}
+          </h1>
+        )}
+        <div className="flex items-center gap-2 shrink-0">
           {/* Link mode button — only for project views */}
           {projectId && !linkMode && (
             <button
