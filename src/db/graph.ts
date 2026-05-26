@@ -1,3 +1,7 @@
+// LOAD-BEARING FOR pear-mcp: this file is imported by the sibling
+// `pear-mcp` package via relative path (`../Pear-Tasks/src/db/graph.ts`).
+// Moving or renaming it breaks the MCP server build. See ADR 0001.
+
 import type { DependencyEdge } from '../types';
 
 /** Build adjacency list from edges: fromTaskId → [toTaskId, ...] */
