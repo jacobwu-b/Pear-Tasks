@@ -1,74 +1,169 @@
 # Pear — Claude Code Instructions
 
-## 0. Before You Write Any Code
-1. Read this entire file
-2. Read PRD.md
-3. State your understanding of the task back to me in 2-3 sentences
-4. Propose a branch name and implementation plan
-5. Wait for explicit approval before proceeding
+The spec is the source of truth. Tests are the contract. This file is the operating system.
+Read it before every session. Rules are not suggestions.
+
+---
+
+## Non-negotiables
+
+1. Branch from main, squash-merge to main. Branches never touch other branches.
+2. No secrets in code, comments, or logs. Ever.
+3. Spec → Plan → Tests → Code. In that order. No exceptions for "small" work above Trivial.
+4. Tests are the definition of done. Green tests → auto-open PR. No waiting.
+5. No AI attribution anywhere in git history.
+6. When in doubt, stop and surface — don't work around.
 
 ---
 
 ## 1. Project Context
-**What this is:** A personal task management web app (Things clone) with first-class dependency tracking between tasks.
-**Spec file(s):** PRD.md
-**Current phase / milestone:** Phase 1 of 7 — Data Layer
-**Primary language:** TypeScript
-**Runtime / framework:** React 18 + Vite
-**Database / ORM:** IndexedDB via Dexie.js
-**Auth:** None (local-only app)
-**Hosting:** Static deployment (no backend)
-**Key third-party services:** None — all data local. Key libraries: Dexie.js (persistence), Zustand (UI state), @dagrejs/dagre (DAG layout), @dnd-kit (drag and drop), chrono-node (date parsing)
+
+- **What:** A personal task management web app (Things clone) with first-class dependency tracking between tasks.
+- **Spec:** `PRD.md` — read before any feature work. Current phase: Phase 1 of 7 — Data Layer.
+- **Stack:** TypeScript / React 18 + Vite / IndexedDB via Dexie.js / Static deployment (no backend)
+- **Commands:** test=`npm test` lint=`npm run lint` typecheck=`tsc --noEmit` build=`npm run build`
+- **Key libraries:** Dexie.js (persistence), Zustand (UI state), @dagrejs/dagre (DAG layout), @dnd-kit (drag and drop), chrono-node (date parsing)
 
 ---
 
-## 2. Session Start
+## 2. Engineering Philosophy
 
-Before any work, run `git status` and `git branch` and report both.
-If either shows something unexpected (uncommitted changes, wrong branch,
-files you didn't create), stop and report — do not proceed.
+These four govern every decision below. Violations are the most common failure mode.
 
-Then triage the task:
+**Think before coding.** State assumptions. If multiple interpretations exist, present them — don't pick silently. If something's unclear, name it and ask. Hidden confusion compounds.
 
-- **Trivial** (typo, comment, rename, formatting): proceed directly.
-- **Standard** (one feature, ≲10 files, no schema or dep changes): produce
-  the plan in Section 4 and wait for approval.
-- **Significant** (>10 files, multiple domains, schema/dep changes,
-  new architectural patterns): discuss the approach in chat *before*
-  writing the plan or creating a branch.
+**Simplicity first.** Write the minimum code that solves the problem. No speculative abstractions, no unrequested flexibility, no error handling for impossible scenarios. If 200 lines could be 50, rewrite.
 
-When in doubt, treat the task as one tier larger than it looks.
+**Surgical changes.** Touch only what the task requires. Don't "improve" adjacent code, don't refactor what isn't broken, match existing style. Every changed line must trace to the request. Clean up orphans *your* changes created — leave pre-existing dead code alone (file an issue per §8).
+
+**Goal-driven execution.** Convert every task into a verifiable goal before coding. "Add validation" → "tests for invalid inputs pass." "Fix the bug" → "regression test passes." Strong success criteria let the loop run; weak ones produce drift.
 
 ---
 
-## 3. Architecture
+## 3. Session Start
 
-### Data Access
-- [x] All IndexedDB access goes through Dexie.js — never use raw IndexedDB APIs
-- [x] All Dexie operations live in `src/db/` — no direct DB calls from components
-- [x] CRUD functions in `src/db/` are the only write path to the database
+Run `git checkout main && git pull origin main`, then `git status` and `git branch`. If anything is unexpected (uncommitted changes, untracked files you didn't create, lockfile drift), stop and report.
 
-### API / External Calls
-- [x] No server calls, no auth, no analytics — fully local app
-- [x] All mutations return `{ data, error }` pattern. Never throw from mutation functions.
+Then, before any work above Trivial:
+1. Read this file end-to-end.
+2. Read `PRD.md`. If no spec exists for the task, stop and surface — specs come before code.
+3. If touching a subtree with its own `CLAUDE.md`, read that too.
 
-### State Management
-- [x] Dexie.js is the source of truth for persistent data
-- [x] Zustand stores hold in-memory UI state (selected view, selected task, sidebar state, link mode, etc.)
-- [x] On every Dexie write, sync the affected data to Zustand so React re-renders
-- [x] No Redux, no Context API for state. Zustand + Dexie only.
+**Definition of Ready:** state acceptance criterion and blast radius in one sentence each. If either is unclear, ask.
 
-### Configuration
-- [x] Semantic color tokens from the start: `--color-surface-primary`, `--color-accent`, etc.
-- [x] Light/dark theme via CSS custom properties — no runtime theme switching logic in JS
-- [x] No environment variables needed (no backend)
+**Triage** — when in doubt, treat as one tier larger.
 
-### Data Integrity
-- [x] Soft deletes only. Deleted items go to Trash with a `deletedAt` timestamp. Purge after 30 days.
-- [x] Every task mutation that touches dependencies must run cycle detection (DFS) before committing
-- [x] Dependencies are scoped to a project — no cross-project deps in v1
+| Tier | Criteria | Process |
+|---|---|---|
+| **Trivial** | Low blast radius, reversible: typo, comment, rename, formatting, isolated refactor, single-file feature ≲100 lines, no schema/dep/contract changes | Proceed directly. Auto-PR on green. |
+| **Standard** | One feature, ≲10 files, no schema or dep changes, no new patterns | Standard plan → approval → Spec/TDD loop → auto-PR. |
+| **Significant** | >10 files, multiple domains, schema/dep changes, new architectural patterns, or anything irreversible | Discuss in chat *first*. Then full plan → approval. |
+
+---
+
+## 4. The Loop: Spec → Plan → Tests → Code
+
+**Trivial work skips this. Standard and Significant always run it.**
+
+1. **Spec.** Confirm acceptance criteria against `PRD.md`. If the spec is silent or contradicts the request, stop and surface — don't infer.
+2. **Plan.** Produce the format below. Wait for approval.
+3. **Tests (Red).** Write failing tests against the acceptance criteria *before* implementation. The failure is the executable spec.
+4. **Code (Green).** Minimum code to pass. No scope expansion mid-loop — if a risk surfaces that wasn't planned, stop and report.
+5. **Refactor.** Clean up while staying green.
+6. **Ship.** Tests/types/lint/build green → auto-open PR (§5).
+
+### Standard plan
+
+```
+Branch: {type}/{scope}-{description}
+What:     [1 sentence]
+Files:    [paths — create/modify]
+Approach: [2–4 bullets]
+Tests:    [behavior, location]
+Manual:   [migrations/env/dashboard, or "none"]
+```
+
+### Significant plan
+Standard plan + **Blast radius** (consumers, schemas, types, runtime), **Risks/open questions**.
+
+If a risk surfaces mid-implementation that wasn't in the plan: stop and report. No unilateral architectural decisions.
+
+---
+
+## 5. Git & PR Protocol
+
+**Invariant:** every branch is born from the tip of main and dies by squash-merge into main. A merge conflict means this rule was broken — stop and report, do not resolve.
+
+**Branch:** `{type}/{scope}-{description}`, kebab-case. Types: `feat` `fix` `chore` `test` `docs` `refactor` `perf`.
+
+**PR title** = squash commit on main. Conventional Commits: `{type}({scope}): {imperative, ≤72 chars}`.
+
+**Auto-PR on green.** When tests, types, lint, and build all pass on a feature branch, push and open the PR immediately. Do not wait for confirmation. Post the URL.
+
+**Attribution:** zero AI attribution, co-author tags, or agent signatures. Anywhere. Strictly suppress any default AI attributions, emojis, or signature footers.
+
+**Aborting a branch:** close PR, `git branch -D {branch}`. Unmerged work is discarded — no recovery protocol.
+
+### PR description (required)
+
+```markdown
+## What
+[2–3 sentences. Purpose understood in 30 seconds.]
+
+## Changes
+- `path` — [what changed and why]
+
+## How to test
+1. [specific step]
+2. Verify: [observable outcome]
+
+## Manual steps
+- [ ] [migrations, env vars, etc. — or "None"]
+
+## Test results
+- All tests: X passing, 0 failing
+- New tests: [list]
+
+## Screenshots
+[Required for UI changes. Delete if backend-only.]
+
+## Out of scope
+[What was intentionally not built and why.]
+
+## Checklist
+- [ ] Tests / types / lint / build all green
+- [ ] No secrets or env vars in code
+- [ ] No debug statements committed
+- [ ] PR title follows Conventional Commits
+- [ ] No AI attribution in commits or metadata
+- [ ] Schema changes are handled (if applicable)
+```
+
+---
+
+## 6. Architecture Invariants
+
+Violating any of these requires written approval *before* the code is written.
+
+- **Data access:** All IndexedDB access through Dexie.js — never raw IndexedDB APIs. All Dexie operations live in `src/db/` — no direct DB calls from components. CRUD functions in `src/db/` are the only write path.
+- **External calls:** No server calls, no auth, no analytics — fully local app. All mutations return `{ data, error }` pattern. Never throw from mutation functions.
+- **State:** Dexie.js is source of truth for persistent data. Zustand stores hold in-memory UI state. On every Dexie write, sync affected data to Zustand. No Redux, no Context API — Zustand + Dexie only.
+- **Configuration:** No environment variables needed (no backend). Semantic color tokens: `--color-surface-primary`, `--color-accent`, etc. Light/dark theme via CSS custom properties only — no runtime theme switching in JS.
+- **Schema:** Any persistent schema change requires migration. No exceptions.
+- **Dependencies:** New deps and version bumps require approval (name, version, justification, why existing deps don't solve it). Lockfile drift from main without explanation is stop-and-report.
+- **Logging:** No `console.log` in committed code. Never catch without logging or re-raising. Never swallow an error to pass a test.
+- **Soft-delete:** Deleted items go to Trash with a `deletedAt` timestamp. Purge after 30 days. No hard deletes.
+- **Data integrity:** Every task mutation that touches dependencies must run cycle detection (DFS) before committing. Dependencies are scoped to a project — no cross-project deps in v1.
+
+### Key files to read before touching related code
+
+- `src/db/schema.ts` — Dexie database schema. Read before any DB work.
+- `src/db/graph.ts` — Cycle detection and DAG utilities. Read before any dependency work.
+- `src/types/index.ts` — All shared types. Read before creating or modifying any entity.
+- `src/styles/tokens.css` — Color tokens. Read before any styling work.
 
 ### Project Structure
+
 ```
 pear-tasks/
 ├── index.html                ← Vite entry point
@@ -110,225 +205,69 @@ pear-tasks/
 └── public/                   ← Static assets (favicon, etc.)
 ```
 
-**Key files Claude must read before touching related code:**
-- `src/db/schema.ts` — Dexie database schema. Read before any DB work.
-- `src/db/graph.ts` — Cycle detection and DAG utilities. Read before any dependency work.
-- `src/types/index.ts` — All shared types. Read before creating or modifying any entity.
-- `src/styles/tokens.css` — Color tokens. Read before any styling work.
-
 ---
 
-## 4. Implementation Plan Format
+## 7. Tests
 
-For Standard and Significant tasks, produce this and wait for approval:
+Tests are the contract. A PR without appropriate tests is not done.
 
-```
-Branch: {type}/{scope}-{description}
-
-Understanding: [2–3 sentences: what and why]
-
-Files to create:
-- path — [purpose]
-
-Files to modify:
-- path — [change and why]
-
-Approach:
-1. [step]
-2. [step]
-
-Blast radius:
-- [what this could break outside the files above —
-   consumers, schemas, types, tests, runtime behavior]
-
-Tests:
-- [behavior] in [path]
-
-Risks / open questions:
-- [anything that might require a decision mid-implementation]
-
-Manual steps required:
-- [migrations, env vars, dashboard changes, etc. — or "none"]
-```
-
-If a risk surfaces mid-implementation that wasn't in the plan, stop
-and report. Do not make unilateral architectural decisions.
-
----
-
-## 5. Git Protocol
-
-**Invariant:** every branch is born from the tip of main and dies by
-squash-merge into main. Branches never touch other branches. A merge
-conflict means this rule was broken — stop and report, do not attempt
-to resolve.
-
-### Starting a branch
-```
-git checkout main && git pull origin main
-git checkout -b {type}/{scope}-{description}
-```
-
-### Branch and commit format
-- Branch: `{type}/{scope}-{description}` — kebab-case, descriptive.
-- Commit messages within a branch are working notes; aim to be descriptive.
-- PR title is the squash commit on main and **must** follow Conventional
-  Commits: `{type}({scope}): {imperative description, ≤72 chars}`
-- Types: `feat` `fix` `chore` `test` `docs` `refactor` `perf`
-
-### Before every commit
-Verify `git status` shows only intentional changes. No `.env`, no
-build artifacts, no `node_modules`. Stage explicitly when in doubt.
-
-### Pre-PR checklist
-Run in order. Do not open the PR until all pass.
-1. On the feature branch, not main
-2. Working tree clean
-3. Tests pass: `[test command]`
-4. Types pass: `[typecheck command]`
-5. Lint passes: `[lint command]` (warnings ok if pre-existing)
-6. Build succeeds: `[build command]`
-7. Push: `git push -u origin {branch}`
-
-### Attribution
-Commit messages, PR titles, and PR descriptions contain **no** AI
-attribution, co-author tags, or agent signatures of any kind. The tools
-used are not recorded in git history.
-
----
-
-## 6. Testing
-
-Tests are not optional. A PR without appropriate tests is not done.
-
-| What you built | Required |
+| Built | Required |
 |---|---|
-| Pure function / utility | Unit tests: happy path + edge cases |
+| Pure function / utility | Unit tests: happy + edges |
 | API endpoint / server action | Unit tests with mocked boundaries |
 | Data transformation | Unit tests with realistic inputs |
-| Bug fix | Regression test that would have caught the bug |
-| Refactor | All pre-existing tests still pass |
+| Bug fix | Regression test that would have caught it |
+| Refactor | Pre-existing tests still pass |
 | UI component (no logic) | None — note in PR |
-| Wiring / config | None — verify manually, note in PR |
+| Wiring / config | None — manual verify, note in PR |
 
-### Quality bar
-Each test must:
-- Test behavior, not implementation
-- Have a sentence-shaped name: `"createNote returns error when unauthenticated"`
-- Cover the unhappy path
-- Use realistic inputs, not `"test"` / `1` / `true`
+**Quality bar.** Test behavior, not implementation. Sentence-shaped names (`createNote returns error when unauthenticated`). Cover the unhappy path. Realistic inputs — not `"test"` / `1` / `true`. Mock at the boundary (DB/HTTP client), never deep inside. No real network or DB writes in unit tests.
 
-### Anti-patterns — stop if you find yourself doing any of these
-- Mocking the thing under test
-- Loosening an assertion to make a test pass
-- Adding `skip` or `only` to commit
-- Writing a test that passes against both the bug and the fix
-
-### Mocking
-Mock at the boundary (DB client, HTTP client), never deep inside.
-Reset mocks between tests. Never make real network calls or write to
-a real database in unit tests.
+**Hard prohibitions:** mocking the thing under test, loosening assertions to pass, committing `skip`/`only`, tests that pass against both bug and fix, deleting failing tests instead of fixing the cause.
 
 ---
 
-## 7. PR Protocol
+## 8. Issues
 
-One PR = one logical unit of work. Signs a PR is too large: touches
-multiple domains, >~15 files changed, hard to write a single-sentence
-title. If scope expands mid-implementation, stop and report — do not
-expand unilaterally.
+Issues capture work that **isn't the current task**. They are not a prerequisite for starting one.
 
-### PR description (required)
-```markdown
-## What
-[2–3 sentences. Purpose understood in 30 seconds.]
+**File one when** mid-implementation you find: out-of-scope bug, broken invariant, tech debt (dead code, duplication, missing tests, fragile pattern). Do not silently fix. Do not expand the current PR. Link from the PR's "Out of scope" section.
 
-## Changes
-- `path` — [what changed and why]
-
-## How to test
-1. [specific step]
-2. Verify: [observable outcome]
-
-## Manual steps
-- [ ] [migrations, env vars, etc. — or "None"]
-
-## Test results
-- All tests: X passing, 0 failing
-- New tests: [list]
-
-## Screenshots
-[Required for UI changes. Delete if backend-only.]
-
-## Out of scope
-[What was intentionally not built and why.]
-
-## Checklist
-- [ ] Tests / types / lint / build all green
-- [ ] No secrets or env vars in code
-- [ ] `.env.example` updated if new env vars
-- [ ] No debug statements committed
-- [ ] PR title follows Conventional Commits
-- [ ] No AI attribution in commits or metadata
-- [ ] Schema changes have migrations (if applicable)
-```
-
-### After opening the PR
-Post the URL, the description, and any manual steps. Then wait. Do not
-start the next task until I confirm the merge.
-
----
-
-## 8. Stop Conditions
-
-Stop and surface — do not work around — when any of these occur:
-
-- A test passes when you expected it to fail
-- A type or lint error you don't understand
-- `git status` shows files you didn't touch
-- A file is much larger or differently structured than expected
-- A dependency is in the project that you didn't know about
-- The spec contradicts the code, or promises something that doesn't exist
-- An approach can't meet a stated performance target
-- You've tried two attempts at a blocker without progress
-- You're about to silently do something adjacent to what was asked
-  because the literal request seems impossible
-
-When stopping, report: what you were trying, what happened, what the
-options look like, what you'd recommend.
+**Don't file** for: the current task, trivial fixes you're authorized to make, vague feelings without a concrete problem.
 
 ---
 
 ## 9. Hard Prohibitions
 
-These are absolute. Stop and tell me before doing any of them.
+Stop and surface before any of these:
 
-**Git:** commit to main, manual `merge`/`rebase`, force-push, branch
-from anything but main, AI attribution in commits.
-
-**Code:** add a dependency without approval, change a dep version
-without approval, read env vars outside the config layer, hard-delete
-when soft-delete is policy, suppress a type/lint error without an
-explanatory comment, leave debug statements committed, write comments
-that describe *what* the code does (comments explain *why*).
-
-**Scope:** build anything not in the current task, refactor unrelated
-files, fix unrelated bugs without asking, introduce new architectural
-patterns without approval.
-
-**Process:** open a PR with failing checks, skip the PR template, mark
-work done before merge is confirmed.
+- Commit to main; manual `merge`/`rebase`; force-push; branch from anything but main; AI attribution in git
+- Add or version-bump a dependency without approval
+- Hard-delete when soft-delete is policy
+- Suppress a type/lint error without an explanatory comment
+- Leave debug statements committed
+- Write comments that describe *what* the code does (comments explain *why*)
+- Build anything outside the current task; refactor unrelated files; fix unrelated bugs without asking
+- Introduce a new architectural pattern without approval
+- Mark work done before merge is confirmed
 
 ---
 
-## 10. Definition of Done
+## 10. Landmines
 
-Done means **all** of:
-- Feature works as specified
-- Tests written and passing; types, lint, build all green
-- PR description complete with manual steps documented
-- PR open, URL shared, reviewed, merged
-- I have confirmed we're ready for the next task
+Document specific things the agent gets wrong here as they happen. Each entry: one-line description + correct behavior. Remove entries that no longer fire.
 
-Code written ≠ done. Tests passing ≠ done. PR opened ≠ done.
-Merged and confirmed = done.
+- *(none yet)*
+
+---
+
+## 11. Definition of Done
+
+All of:
+- Feature meets acceptance criteria from the spec
+- Tests written and green; types, lint, build green
+- PR auto-opened against main, template filled, URL posted
+- Manual steps documented in the PR
+- Merged and confirmed
+
+Code written ≠ done. Tests passing ≠ done. PR opened ≠ done. **Merged and confirmed = done.**
