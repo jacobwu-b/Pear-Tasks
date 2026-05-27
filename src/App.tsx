@@ -10,6 +10,7 @@ import { seedBuiltInTemplates } from './db/templates'
 import { useUiStore } from './store/uiStore'
 import { useTaskStore } from './store/taskStore'
 import { useGlobalShortcuts } from './lib/keyboard'
+import { startSyncPolling } from './db/syncFile'
 
 function App() {
   const [ready, setReady] = useState(false)
@@ -35,6 +36,8 @@ function App() {
   const updateTaskField = useTaskStore((s) => s.updateTaskField)
 
   const hydrateSyncFile = useUiStore((s) => s.hydrateSyncFile)
+  const setSyncError = useUiStore((s) => s.setSyncError)
+  const rehydrateAll = useTaskStore((s) => s.rehydrateAll)
 
   useEffect(() => {
     Promise.all([
@@ -43,6 +46,17 @@ function App() {
       hydrateSyncFile(),
     ]).then(() => setReady(true))
   }, [hydrateSyncFile])
+
+  useEffect(() => {
+    const stop = startSyncPolling({
+      onReload: () => {
+        void hydrateSyncFile()
+        void rehydrateAll()
+      },
+      onError: (err) => setSyncError(err),
+    })
+    return stop
+  }, [hydrateSyncFile, rehydrateAll, setSyncError])
 
   const isProjectView = typeof sidebarView === 'object' && sidebarView.type === 'project'
   const anyModalOpen = quickCaptureOpen || newTaskFormOpen || shortcutHelpOpen || searchOpen

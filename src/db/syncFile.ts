@@ -1,14 +1,43 @@
 import { db } from './schema';
-import { exportDatabase, type PearExport } from './exportImport';
+import { exportDatabase, importDatabase, type PearExport } from './exportImport';
 
 /**
  * The on-disk envelope is the v3 export envelope plus a monotonic `syncVersion`
- * counter that bumps on every successful save. Schema `version` stays at 3 so
- * the file remains a valid Pear export that can also be imported via the
- * normal Import flow.
+ * counter that bumps on every successful save, and a `writtenBy` session tag
+ * so a tab can tell its own writes apart from external ones during polling.
+ * Schema `version` stays at 3 so the file remains a valid Pear export that
+ * can also be imported via the normal Import flow.
  */
 export interface SyncEnvelope extends PearExport {
   syncVersion: number;
+  /** Session ID of the tab that produced this write. */
+  writtenBy: string;
+}
+
+/**
+ * Per-page-load session ID. Used as the `writtenBy` tag on every write so the
+ * polling loop can ignore writes we made ourselves and avoid a self-reload.
+ */
+const SESSION_ID: string = (() => {
+  const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
+  if (c?.randomUUID) return c.randomUUID();
+  return `s-${Math.random().toString(36).slice(2)}-${Date.now()}`;
+})();
+
+export function getSyncSessionId(): string {
+  return SESSION_ID;
+}
+
+/**
+ * Last file mtime we observed. Used by the poll loop to short-circuit the
+ * common "file unchanged" path before parsing. Module-scoped: there is at most
+ * one sync file per tab.
+ */
+let lastSeenMtime: number | null = null;
+
+/** Test seam — reset module state so each test starts from a clean slate. */
+export function __resetSyncPollStateForTests(): void {
+  lastSeenMtime = null;
 }
 
 export type SyncResult<T> =
@@ -180,7 +209,11 @@ export async function saveToSyncFile(): Promise<SyncResult<SyncFileSnapshot>> {
 
   const exported = await exportDatabase();
   const nextVersion = row.lastSyncVersion + 1;
-  const envelope: SyncEnvelope = { ...exported, syncVersion: nextVersion };
+  const envelope: SyncEnvelope = {
+    ...exported,
+    syncVersion: nextVersion,
+    writtenBy: SESSION_ID,
+  };
   const json = JSON.stringify(envelope, null, 2);
 
   let writable: FileSystemWritableFileStream;
@@ -213,5 +246,194 @@ export async function saveToSyncFile(): Promise<SyncResult<SyncFileSnapshot>> {
     lastSavedAt: Date.now(),
   };
   await db.syncFile.put(updated);
+
+  // Update the cached mtime so the next poll's mtime-equal short-circuit
+  // catches our own write without re-parsing the envelope. The writtenBy tag
+  // check is the real guard, but this avoids the extra work in the hot path.
+  try {
+    const f = await row.handle.getFile();
+    lastSeenMtime = f.lastModified;
+  } catch {
+    // If we can't read the file back, the next poll will simply re-parse.
+  }
+
   return { data: snapshotOf(updated), error: null };
+}
+
+/**
+ * Result of a single poll tick.
+ * - 'no-change'   — mtime matched the last seen value; nothing was read.
+ * - 'self-write'  — file changed but the envelope's writtenBy tag is ours.
+ * - 'local-ahead' — file's syncVersion is not greater than what we last saved;
+ *                   the in-memory DB is the source.
+ * - 'reloaded'    — external bump detected; Dexie tables were atomically
+ *                   replaced from the file.
+ */
+export type PollAction = 'no-change' | 'self-write' | 'local-ahead' | 'reloaded';
+
+export interface PollOutcome {
+  action: PollAction;
+  syncVersion: number | null;
+}
+
+/**
+ * Read the connected sync file once and reconcile it with the local DB.
+ *
+ * Spec (0002 §M2): every 3s while the tab is visible, check the file's mtime.
+ * On an external version bump (writtenBy !== our session AND syncVersion >
+ * local lastSyncVersion), atomically replace Dexie tables in a transaction
+ * and bump the local lastSyncVersion. Self-writes and stale files are no-ops.
+ */
+export async function pollSyncFile(): Promise<SyncResult<PollOutcome>> {
+  const row = await getSyncFileRecord();
+  if (!row) {
+    return {
+      data: null,
+      error: { kind: 'not-connected', message: 'No sync file connected.' },
+    };
+  }
+  const permission = await ensurePermission(row.handle);
+  if (permission !== 'granted') {
+    return {
+      data: null,
+      error: {
+        kind: 'permission-lost',
+        message: 'Read permission for the sync file was revoked.',
+      },
+    };
+  }
+
+  let file: { lastModified: number; text: () => Promise<string> };
+  try {
+    file = await row.handle.getFile();
+  } catch (e) {
+    return {
+      data: null,
+      error: { kind: 'read-failed', message: e instanceof Error ? e.message : String(e) },
+    };
+  }
+
+  if (lastSeenMtime !== null && file.lastModified === lastSeenMtime) {
+    return {
+      data: { action: 'no-change', syncVersion: row.lastSyncVersion },
+      error: null,
+    };
+  }
+  lastSeenMtime = file.lastModified;
+
+  let parsed: SyncEnvelope;
+  try {
+    const text = await file.text();
+    parsed = JSON.parse(text) as SyncEnvelope;
+  } catch (e) {
+    return {
+      data: null,
+      error: { kind: 'read-failed', message: e instanceof Error ? e.message : String(e) },
+    };
+  }
+
+  if (parsed.writtenBy === SESSION_ID) {
+    return {
+      data: { action: 'self-write', syncVersion: parsed.syncVersion ?? null },
+      error: null,
+    };
+  }
+
+  if (typeof parsed.syncVersion !== 'number' || parsed.syncVersion <= row.lastSyncVersion) {
+    return {
+      data: { action: 'local-ahead', syncVersion: parsed.syncVersion ?? null },
+      error: null,
+    };
+  }
+
+  const importResult = await importDatabase(parsed);
+  if (!importResult.ok) {
+    return {
+      data: null,
+      error: { kind: 'read-failed', message: importResult.error },
+    };
+  }
+  await db.syncFile.put({ ...row, lastSyncVersion: parsed.syncVersion });
+  return {
+    data: { action: 'reloaded', syncVersion: parsed.syncVersion },
+    error: null,
+  };
+}
+
+export interface StartSyncPollingOptions {
+  /** Poll interval in ms. Defaults to 3000 per spec 0002. */
+  intervalMs?: number;
+  /** Called when an external version bump has been applied to Dexie. */
+  onReload?: (outcome: PollOutcome) => void;
+  /** Called for any poll error worth surfacing to the user (e.g. permission). */
+  onError?: (error: SyncError) => void;
+}
+
+/**
+ * Start polling the connected sync file. The loop is gated by the Page
+ * Visibility API: polls only fire while document.visibilityState === 'visible',
+ * and an immediate tick fires whenever the tab returns to visible.
+ *
+ * Returns a stop function that removes the visibility listener and clears the
+ * interval. Safe to call in environments without `document` (the loop just
+ * runs unconditionally) so the same hook works for tests.
+ */
+export function startSyncPolling(opts: StartSyncPollingOptions = {}): () => void {
+  const intervalMs = opts.intervalMs ?? 3000;
+  let timer: ReturnType<typeof setInterval> | null = null;
+  let inFlight = false;
+
+  const tick = async (): Promise<void> => {
+    if (inFlight) return;
+    if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+    inFlight = true;
+    try {
+      const result = await pollSyncFile();
+      if (result.error) {
+        // 'not-connected' is the steady state before the user picks a file;
+        // it's not worth surfacing.
+        if (result.error.kind !== 'not-connected') opts.onError?.(result.error);
+        return;
+      }
+      if (result.data.action === 'reloaded') opts.onReload?.(result.data);
+    } finally {
+      inFlight = false;
+    }
+  };
+
+  const start = (): void => {
+    if (timer !== null) return;
+    timer = setInterval(() => {
+      void tick();
+    }, intervalMs);
+  };
+  const stop = (): void => {
+    if (timer === null) return;
+    clearInterval(timer);
+    timer = null;
+  };
+
+  const onVisibility = (): void => {
+    if (typeof document === 'undefined') return;
+    if (document.visibilityState === 'visible') {
+      void tick();
+      start();
+    } else {
+      stop();
+    }
+  };
+
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', onVisibility);
+    if (document.visibilityState === 'visible') start();
+  } else {
+    start();
+  }
+
+  return () => {
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', onVisibility);
+    }
+    stop();
+  };
 }
