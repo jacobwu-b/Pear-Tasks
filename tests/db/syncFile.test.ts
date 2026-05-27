@@ -5,15 +5,25 @@ import {
   connectSyncFile,
   disconnectSyncFile,
   ensurePermission,
+  enqueueSyncWrite,
+  flushSyncWritesNow,
   getSyncFileRecord,
   getSyncFileSnapshot,
   getSyncSessionId,
   isSyncFileSupported,
+  onSyncWriteError,
   pollSyncFile,
   saveToSyncFile,
   type SyncEnvelope,
+  type SyncError,
 } from '../../src/db/syncFile';
-import { createTask, getTasksByProject } from '../../src/db/operations';
+import {
+  addChecklistItem,
+  createProject,
+  createTask,
+  getTasksByProject,
+  updateTask,
+} from '../../src/db/operations';
 import { db } from '../../src/db/schema';
 import { clearDatabase } from '../helpers';
 import type { SyncFileRecord, Task } from '../../src/types';
@@ -438,6 +448,126 @@ describe('pollSyncFile', () => {
     expect(parsed.writtenBy).toBe(getSyncSessionId());
     expect(typeof parsed.writtenBy).toBe('string');
     expect(parsed.writtenBy.length).toBeGreaterThan(0);
+  });
+});
+
+describe('enqueueSyncWrite (debounced write-through)', () => {
+  it('does nothing when no sync file is connected', async () => {
+    // No connect call. Just enqueue and flush — should not throw, no write.
+    enqueueSyncWrite();
+    await flushSyncWritesNow();
+    expect(await getSyncFileSnapshot()).toBeNull();
+  });
+
+  it('coalesces many CRUD mutations into a single write per debounce window', async () => {
+    const handle = makeFakeHandle('pear.json');
+    (globalThis as GlobalWithPicker).showSaveFilePicker = vi.fn(async () => handle);
+    await connectSyncFile();
+
+    // Each of these CRUD calls enqueues a write. They land well within the
+    // 300ms debounce window, so a single flush should consume them all.
+    await createTask('A');
+    await createTask('B');
+    await createTask('C');
+
+    await flushSyncWritesNow();
+
+    expect(handle.writables).toHaveLength(1);
+    const parsed = JSON.parse(handle.writables[0].written) as SyncEnvelope;
+    expect(parsed.syncVersion).toBe(1);
+    expect(parsed.tables.tasks).toHaveLength(3);
+  });
+
+  it('produces exactly one write for a bulk transaction', async () => {
+    const handle = makeFakeHandle('pear.json');
+    (globalThis as GlobalWithPicker).showSaveFilePicker = vi.fn(async () => handle);
+    await connectSyncFile();
+
+    const proj = await createProject('Bulk');
+    expect(proj.error).toBeNull();
+    // Drain the project-creation debounce so the bulk transaction below
+    // is observed independently.
+    await flushSyncWritesNow();
+    expect(handle.writables).toHaveLength(1);
+
+    await db.transaction('rw', db.tasks, db.checklistItems, async () => {
+      const t1 = await createTask('Task 1', { projectId: proj.data!.id });
+      const t2 = await createTask('Task 2', { projectId: proj.data!.id });
+      await addChecklistItem(t1.data!.id, 'sub a');
+      await addChecklistItem(t1.data!.id, 'sub b');
+      await updateTask(t2.data!.id, { notes: 'edited' });
+    });
+
+    await flushSyncWritesNow();
+
+    // The bulk transaction produced one additional write, not five.
+    expect(handle.writables).toHaveLength(2);
+    const parsed = JSON.parse(handle.writables[1].written) as SyncEnvelope;
+    expect(parsed.tables.tasks).toHaveLength(2);
+    expect(parsed.tables.checklistItems).toHaveLength(2);
+  });
+
+  it('retries with backoff up to 3 attempts on transient write failures', async () => {
+    const handle = makeFakeHandle('pear.json');
+    (globalThis as GlobalWithPicker).showSaveFilePicker = vi.fn(async () => handle);
+    await connectSyncFile();
+
+    // Make the next three createWritable() calls produce a writable whose
+    // write() throws. The fourth and beyond succeed.
+    let writableCount = 0;
+    const origCreate = handle.createWritable.bind(handle);
+    handle.createWritable = async () => {
+      writableCount += 1;
+      if (writableCount <= 3) {
+        handle.failNextWrite = true;
+      }
+      return origCreate();
+    };
+
+    const errors: SyncError[] = [];
+    const unsub = onSyncWriteError((e) => errors.push(e));
+
+    await createTask('Will retry');
+    await flushSyncWritesNow();
+
+    unsub();
+
+    // 3 attempts, all failed. Error surfaced exactly once.
+    expect(writableCount).toBe(3);
+    expect(errors).toHaveLength(1);
+    expect(errors[0].kind).toBe('write-failed');
+    // lastSyncVersion was never bumped because every save failed.
+    const snap = await getSyncFileSnapshot();
+    expect(snap?.lastSyncVersion).toBe(0);
+  });
+
+  it('does not retry permission-lost — surfaces the error immediately', async () => {
+    const handle = makeFakeHandle('pear.json');
+    (globalThis as GlobalWithPicker).showSaveFilePicker = vi.fn(async () => handle);
+    await connectSyncFile();
+    // Revoke permission after connect so the next save returns permission-lost.
+    handle.permission = 'denied';
+
+    let attempts = 0;
+    const origCreate = handle.createWritable.bind(handle);
+    handle.createWritable = async () => {
+      attempts += 1;
+      return origCreate();
+    };
+
+    const errors: SyncError[] = [];
+    const unsub = onSyncWriteError((e) => errors.push(e));
+
+    await createTask('Permissionless');
+    await flushSyncWritesNow();
+
+    unsub();
+
+    // permission-lost short-circuits the retry loop — createWritable is
+    // never even called.
+    expect(attempts).toBe(0);
+    expect(errors).toHaveLength(1);
+    expect(errors[0].kind).toBe('permission-lost');
   });
 });
 

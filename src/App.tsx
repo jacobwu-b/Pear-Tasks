@@ -5,12 +5,13 @@ import NewTaskForm from './components/tasks/NewTaskForm'
 import ShortcutHelp from './components/common/ShortcutHelp'
 import SearchPalette from './components/common/SearchPalette'
 import DataManagement from './components/common/DataManagement'
+import SyncToast from './components/common/SyncToast'
 import { seedOnFirstLaunch } from './db/seed'
 import { seedBuiltInTemplates } from './db/templates'
 import { useUiStore } from './store/uiStore'
 import { useTaskStore } from './store/taskStore'
 import { useGlobalShortcuts } from './lib/keyboard'
-import { startSyncPolling } from './db/syncFile'
+import { onSyncWriteError, onSyncWriteSuccess, startSyncPolling } from './db/syncFile'
 
 function App() {
   const [ready, setReady] = useState(false)
@@ -37,6 +38,7 @@ function App() {
 
   const hydrateSyncFile = useUiStore((s) => s.hydrateSyncFile)
   const setSyncError = useUiStore((s) => s.setSyncError)
+  const setSyncFile = useUiStore((s) => s.setSyncFile)
   const rehydrateAll = useTaskStore((s) => s.rehydrateAll)
 
   useEffect(() => {
@@ -55,8 +57,14 @@ function App() {
       },
       onError: (err) => setSyncError(err),
     })
-    return stop
-  }, [hydrateSyncFile, rehydrateAll, setSyncError])
+    const unsubErr = onSyncWriteError((err) => setSyncError(err))
+    const unsubOk = onSyncWriteSuccess((snap) => setSyncFile(snap))
+    return () => {
+      stop()
+      unsubErr()
+      unsubOk()
+    }
+  }, [hydrateSyncFile, rehydrateAll, setSyncError, setSyncFile])
 
   const isProjectView = typeof sidebarView === 'object' && sidebarView.type === 'project'
   const anyModalOpen = quickCaptureOpen || newTaskFormOpen || shortcutHelpOpen || searchOpen
@@ -118,6 +126,7 @@ function App() {
       <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} />
       <DataManagement open={dataOpen} onClose={() => setDataOpen(false)} />
       <ShortcutHelp open={shortcutHelpOpen} onClose={() => setShortcutHelpOpen(false)} />
+      <SyncToast />
     </>
   )
 }

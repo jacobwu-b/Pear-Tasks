@@ -38,6 +38,7 @@ let lastSeenMtime: number | null = null;
 /** Test seam — reset module state so each test starts from a clean slate. */
 export function __resetSyncPollStateForTests(): void {
   lastSeenMtime = null;
+  resetSyncQueueState();
 }
 
 export type SyncResult<T> =
@@ -358,6 +359,151 @@ export async function pollSyncFile(): Promise<SyncResult<PollOutcome>> {
     data: { action: 'reloaded', syncVersion: parsed.syncVersion },
     error: null,
   };
+}
+
+// ── Debounced write-through queue ──────────────────────────────────
+//
+// Spec 0002 §M2: every Dexie mutation enqueues a sync write. Writes
+// coalesce on a 300ms debounce so a bulk operation inside a single
+// `db.transaction('rw', …)` produces exactly one file write. On failure,
+// the flush retries with exponential backoff up to MAX_ATTEMPTS times
+// before surfacing the error to registered listeners.
+
+const DEBOUNCE_MS = 300;
+const MAX_ATTEMPTS = 3;
+/** Backoff between retries. Indexed by attempt number (1-based). */
+const BACKOFF_MS = [0, 600, 1200];
+
+let pendingTimer: ReturnType<typeof setTimeout> | null = null;
+let inFlight = false;
+let pendingAfterFlight = false;
+
+type SyncErrorListener = (error: SyncError) => void;
+type SyncSuccessListener = (snapshot: SyncFileSnapshot) => void;
+const errorListeners = new Set<SyncErrorListener>();
+const successListeners = new Set<SyncSuccessListener>();
+
+/**
+ * Subscribe to write-through failures that have exhausted all retries.
+ * Returns an unsubscribe function. Used by the UI to surface a toast.
+ */
+export function onSyncWriteError(listener: SyncErrorListener): () => void {
+  errorListeners.add(listener);
+  return () => errorListeners.delete(listener);
+}
+
+/**
+ * Subscribe to successful write-through flushes. Used by the UI to refresh
+ * the displayed lastSyncVersion / lastSavedAt without polling Dexie.
+ */
+export function onSyncWriteSuccess(listener: SyncSuccessListener): () => void {
+  successListeners.add(listener);
+  return () => successListeners.delete(listener);
+}
+
+function notifyError(error: SyncError): void {
+  for (const l of errorListeners) {
+    try {
+      l(error);
+    } catch {
+      // A bad listener should never break the sync loop.
+    }
+  }
+}
+
+/**
+ * Enqueue a sync-file write. Coalesces multiple calls within DEBOUNCE_MS into
+ * a single save. No-op if no sync file is connected.
+ *
+ * Safe to call from any CRUD function. Errors are routed to listeners — the
+ * caller's Result<T> is not affected by the eventual write outcome.
+ */
+export function enqueueSyncWrite(): void {
+  if (pendingTimer !== null) {
+    clearTimeout(pendingTimer);
+  }
+  pendingTimer = setTimeout(() => {
+    pendingTimer = null;
+    void runFlush();
+  }, DEBOUNCE_MS);
+}
+
+async function runFlush(): Promise<void> {
+  if (inFlight) {
+    // A flush is already running; record that more work arrived so we run
+    // again after it completes. Otherwise we could lose the most recent edit.
+    pendingAfterFlight = true;
+    return;
+  }
+  inFlight = true;
+  try {
+    // Skip silently if no sync file is connected — write-through is an
+    // opt-in feature. The user has not asked us to save anywhere.
+    const row = await getSyncFileRecord();
+    if (!row) return;
+
+    let lastError: SyncError | null = null;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+      if (attempt > 1) {
+        await delay(BACKOFF_MS[attempt - 1]);
+      }
+      const result = await saveToSyncFile();
+      if (!result.error) {
+        lastError = null;
+        for (const l of successListeners) {
+          try {
+            l(result.data);
+          } catch {
+            // A bad listener should never break the sync loop.
+          }
+        }
+        break;
+      }
+      lastError = result.error;
+      // Don't burn retries on errors that can't be fixed by retrying.
+      if (
+        result.error.kind === 'not-connected' ||
+        result.error.kind === 'permission-lost' ||
+        result.error.kind === 'unsupported'
+      ) {
+        break;
+      }
+    }
+    if (lastError) notifyError(lastError);
+  } finally {
+    inFlight = false;
+    if (pendingAfterFlight) {
+      pendingAfterFlight = false;
+      // A new edit landed during the flush — run another debounced save so
+      // the file catches up. Use the same debounce window so further edits
+      // can still coalesce into it.
+      enqueueSyncWrite();
+    }
+  }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Force the pending debounced write to fire immediately. Used by tests. */
+export async function flushSyncWritesNow(): Promise<void> {
+  if (pendingTimer !== null) {
+    clearTimeout(pendingTimer);
+    pendingTimer = null;
+  }
+  await runFlush();
+}
+
+function resetSyncQueueState(): void {
+  if (pendingTimer !== null) {
+    clearTimeout(pendingTimer);
+    pendingTimer = null;
+  }
+  inFlight = false;
+  pendingAfterFlight = false;
+  errorListeners.clear();
+  successListeners.clear();
 }
 
 export interface StartSyncPollingOptions {
