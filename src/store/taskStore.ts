@@ -79,6 +79,12 @@ interface TaskState {
   loadTasksForView: (view: SidebarView) => Promise<void>;
   /** Reload tasks for the currently loaded view */
   refreshTasks: () => Promise<void>;
+  /**
+   * Re-pull sidebar data and the current view's tasks. Used after Dexie is
+   * atomically replaced by an external sync-file reload, where every cached
+   * slice in the store is now stale.
+   */
+  rehydrateAll: () => Promise<void>;
 
   // Mutation wrappers: write to Dexie, then refresh
   completeTask: (id: string) => Promise<void>;
@@ -266,6 +272,11 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       currentView === 'trash' ? fetchTrashedProjects() : Promise.resolve(get().trashedProjects),
     ]);
     set({ tasks, edges, trashedProjects, ...caches });
+  },
+
+  rehydrateAll: async () => {
+    await get().loadSidebarData();
+    await get().refreshTasks();
   },
 
   completeTask: async (id) => {

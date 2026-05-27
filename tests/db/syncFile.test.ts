@@ -1,18 +1,22 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  __resetSyncPollStateForTests,
   connectSyncFile,
   disconnectSyncFile,
   ensurePermission,
   getSyncFileRecord,
   getSyncFileSnapshot,
+  getSyncSessionId,
   isSyncFileSupported,
+  pollSyncFile,
   saveToSyncFile,
+  type SyncEnvelope,
 } from '../../src/db/syncFile';
-import { createTask } from '../../src/db/operations';
+import { createTask, getTasksByProject } from '../../src/db/operations';
 import { db } from '../../src/db/schema';
 import { clearDatabase } from '../helpers';
-import type { SyncFileRecord } from '../../src/types';
+import type { SyncFileRecord, Task } from '../../src/types';
 
 /**
  * Methods live on the class prototype so that `structuredClone` (which
@@ -25,12 +29,14 @@ class FakeWritable {
   closed = false;
   aborted = false;
   shouldThrowOnWrite = false;
+  onClose: (() => void) | null = null;
   async write(data: string): Promise<void> {
     if (this.shouldThrowOnWrite) throw new Error('Disk full');
     this.written += data;
   }
   async close(): Promise<void> {
     this.closed = true;
+    this.onClose?.();
   }
   async abort(): Promise<void> {
     this.aborted = true;
@@ -43,6 +49,11 @@ class FakeHandle {
   permission: PermissionState = 'granted';
   writables: FakeWritable[] = [];
   failNextWrite = false;
+  /** Current on-disk contents; settable directly to simulate external writes. */
+  contents = '';
+  /** Current mtime; bumped on every write or external-replace. */
+  lastModified = 0;
+  private mtimeCounter = 0;
   constructor(name: string, permission: PermissionState = 'granted') {
     this.name = name;
     this.permission = permission;
@@ -57,12 +68,25 @@ class FakeHandle {
     const w = new FakeWritable();
     w.shouldThrowOnWrite = this.failNextWrite;
     this.failNextWrite = false;
+    w.onClose = () => {
+      this.contents = w.written;
+      this.mtimeCounter += 1;
+      this.lastModified = this.mtimeCounter;
+    };
     this.writables.push(w);
     return w;
   }
-  async getFile(): Promise<{ text: () => Promise<string> }> {
-    const last = this.writables[this.writables.length - 1];
-    return { text: async () => last?.written ?? '' };
+  /** Simulate an external write to the file (e.g. by the MCP server). */
+  externalWrite(text: string): void {
+    this.contents = text;
+    this.mtimeCounter += 1;
+    this.lastModified = this.mtimeCounter;
+  }
+  async getFile(): Promise<{ lastModified: number; text: () => Promise<string> }> {
+    return {
+      lastModified: this.lastModified,
+      text: async () => this.contents,
+    };
   }
 }
 
@@ -85,6 +109,7 @@ const memoryTable = new Map<string, SyncFileRecord>();
 beforeEach(async () => {
   await clearDatabase();
   memoryTable.clear();
+  __resetSyncPollStateForTests();
 
   vi.spyOn(db.syncFile, 'put').mockImplementation(async (value: SyncFileRecord) => {
     memoryTable.set(value.id, value);
@@ -234,6 +259,185 @@ describe('disconnectSyncFile', () => {
 
     await disconnectSyncFile();
     expect(await getSyncFileSnapshot()).toBeNull();
+  });
+});
+
+describe('pollSyncFile', () => {
+  it('returns not-connected when no handle is stored', async () => {
+    const result = await pollSyncFile();
+    expect(result.error?.kind).toBe('not-connected');
+  });
+
+  it('ignores writes Pear made itself (writtenBy === own session)', async () => {
+    const handle = makeFakeHandle('pear.json');
+    (globalThis as GlobalWithPicker).showSaveFilePicker = vi.fn(async () => handle);
+    await connectSyncFile();
+    await createTask('Buy milk');
+    await saveToSyncFile();
+
+    // First poll right after our own save — should be 'no-change' (mtime cached
+    // by saveToSyncFile) or 'self-write' if we externally bump mtime.
+    const first = await pollSyncFile();
+    expect(first.error).toBeNull();
+    expect(first.data?.action).toBe('no-change');
+
+    // Force the polling layer to actually read the file by bumping mtime
+    // out from under it without touching contents. The writtenBy tag must
+    // still keep this a self-write.
+    handle.lastModified += 1;
+    const second = await pollSyncFile();
+    expect(second.error).toBeNull();
+    expect(second.data?.action).toBe('self-write');
+
+    // Local sync version is unchanged.
+    const snap = await getSyncFileSnapshot();
+    expect(snap?.lastSyncVersion).toBe(1);
+  });
+
+  it('reloads Dexie tables on an external version bump from another session', async () => {
+    const handle = makeFakeHandle('pear.json');
+    (globalThis as GlobalWithPicker).showSaveFilePicker = vi.fn(async () => handle);
+    await connectSyncFile();
+    await createTask('Local task');
+    await saveToSyncFile();
+
+    // Build an external envelope from another session with a higher version
+    // and a different task set.
+    const externalTask: Task = {
+      id: 'ext-task-1',
+      title: 'Task from MCP',
+      notes: '',
+      status: 'open',
+      when: null,
+      deadline: null,
+      tags: [],
+      projectId: 'ext-proj-1',
+      areaId: null,
+      sortOrder: 0,
+      createdAt: Date.now(),
+      completedAt: null,
+      deletedAt: null,
+      recurrence: null,
+      recurringParentId: null,
+    };
+    const externalEnvelope: SyncEnvelope = {
+      app: 'pear-tasks',
+      version: 3,
+      exportedAt: new Date().toISOString(),
+      tables: {
+        areas: [],
+        projects: [
+          {
+            id: 'ext-proj-1',
+            title: 'External project',
+            notes: '',
+            status: 'active',
+            areaId: null,
+            deadline: null,
+            tags: [],
+            sortOrder: 0,
+            createdAt: Date.now(),
+            completedAt: null,
+            deletedAt: null,
+          },
+        ],
+        tasks: [externalTask],
+        checklistItems: [],
+        dependencyEdges: [],
+        templates: [],
+      },
+      syncVersion: 99,
+      writtenBy: 'some-other-session',
+    };
+    handle.externalWrite(JSON.stringify(externalEnvelope));
+
+    const result = await pollSyncFile();
+    expect(result.error).toBeNull();
+    expect(result.data?.action).toBe('reloaded');
+    expect(result.data?.syncVersion).toBe(99);
+
+    // Dexie now reflects the file's contents.
+    const tasks = await getTasksByProject('ext-proj-1');
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].title).toBe('Task from MCP');
+
+    // The local lastSyncVersion advances to the external version so a
+    // re-poll of the same file is a no-op.
+    const snap = await getSyncFileSnapshot();
+    expect(snap?.lastSyncVersion).toBe(99);
+  });
+
+  it('does nothing when the file syncVersion is not ahead of local', async () => {
+    const handle = makeFakeHandle('pear.json');
+    (globalThis as GlobalWithPicker).showSaveFilePicker = vi.fn(async () => handle);
+    await connectSyncFile();
+    await createTask('Local task');
+    // Bring local lastSyncVersion to 5.
+    await saveToSyncFile();
+    await saveToSyncFile();
+    await saveToSyncFile();
+    await saveToSyncFile();
+    await saveToSyncFile();
+
+    // External envelope with a lower syncVersion (3) but a foreign session tag
+    // — we are the source of truth, so the poll must not reload.
+    const staleEnvelope: SyncEnvelope = {
+      app: 'pear-tasks',
+      version: 3,
+      exportedAt: new Date().toISOString(),
+      tables: {
+        areas: [],
+        projects: [],
+        tasks: [],
+        checklistItems: [],
+        dependencyEdges: [],
+        templates: [],
+      },
+      syncVersion: 3,
+      writtenBy: 'some-other-session',
+    };
+    handle.externalWrite(JSON.stringify(staleEnvelope));
+
+    const result = await pollSyncFile();
+    expect(result.error).toBeNull();
+    expect(result.data?.action).toBe('local-ahead');
+
+    // Local task still present, local version unchanged.
+    const snap = await getSyncFileSnapshot();
+    expect(snap?.lastSyncVersion).toBe(5);
+    const remaining = await db.tasks.toArray();
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0].title).toBe('Local task');
+  });
+
+  it('short-circuits with no-change when mtime is unchanged', async () => {
+    const handle = makeFakeHandle('pear.json');
+    (globalThis as GlobalWithPicker).showSaveFilePicker = vi.fn(async () => handle);
+    await connectSyncFile();
+    await saveToSyncFile();
+
+    // Spy on getFile to ensure we don't even read text() on the no-change path.
+    const getFileSpy = vi.spyOn(handle, 'getFile');
+    const first = await pollSyncFile();
+    expect(first.data?.action).toBe('no-change');
+    const fileObj = await getFileSpy.mock.results[0].value;
+    expect(fileObj.lastModified).toBe(handle.lastModified);
+
+    // A second poll with no external change still resolves to no-change.
+    const second = await pollSyncFile();
+    expect(second.data?.action).toBe('no-change');
+  });
+
+  it('tags each write with the session id and bumps it across saves', async () => {
+    const handle = makeFakeHandle('pear.json');
+    (globalThis as GlobalWithPicker).showSaveFilePicker = vi.fn(async () => handle);
+    await connectSyncFile();
+    await saveToSyncFile();
+
+    const parsed = JSON.parse(handle.contents) as SyncEnvelope;
+    expect(parsed.writtenBy).toBe(getSyncSessionId());
+    expect(typeof parsed.writtenBy).toBe('string');
+    expect(parsed.writtenBy.length).toBeGreaterThan(0);
   });
 });
 
