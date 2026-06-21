@@ -768,6 +768,7 @@ export async function purgeOldTrash(): Promise<Result<void>> {
     }
 
     await db.projects.filter((p) => p.deletedAt !== null && p.deletedAt < cutoff).delete();
+    await db.areas.filter((a) => a.deletedAt !== null && a.deletedAt < cutoff).delete();
     enqueueSyncWrite();
     return ok(undefined);
   });
