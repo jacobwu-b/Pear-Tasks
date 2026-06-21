@@ -11,6 +11,9 @@ function messageFor(error: SyncError): string {
   if (error.kind === 'write-failed') {
     return `Couldn't save to sync file: ${error.message}`;
   }
+  if (error.kind === 'conflict') {
+    return 'The sync file changed elsewhere while you had unsaved edits. Reload to pull the latest, or use Save As to keep your copy.';
+  }
   return error.message;
 }
 

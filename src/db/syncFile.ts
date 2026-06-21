@@ -51,7 +51,8 @@ export type SyncError =
   | { kind: 'picker-aborted'; message: string }
   | { kind: 'not-connected'; message: string }
   | { kind: 'write-failed'; message: string }
-  | { kind: 'read-failed'; message: string };
+  | { kind: 'read-failed'; message: string }
+  | { kind: 'conflict'; message: string };
 
 const RECORD_ID = 'singleton' as const;
 const DEFAULT_FILE_NAME = 'pear-db.json';
@@ -183,6 +184,24 @@ export async function getSyncFileSnapshot(): Promise<SyncFileSnapshot | null> {
 }
 
 /**
+ * Read just the `syncVersion`/`writtenBy` tags from the on-disk file. Returns
+ * null when the file can't be read or parsed (e.g. it doesn't exist yet, or a
+ * write is mid-flight) — callers treat that as "no known conflict".
+ */
+async function readOnDiskSyncVersion(
+  handle: FileSystemFileHandle,
+): Promise<{ syncVersion: number; writtenBy: string } | null> {
+  try {
+    const file = await handle.getFile();
+    const parsed = JSON.parse(await file.text()) as Partial<SyncEnvelope>;
+    if (typeof parsed.syncVersion !== 'number') return null;
+    return { syncVersion: parsed.syncVersion, writtenBy: parsed.writtenBy ?? '' };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Write the full v3 envelope to the connected file. The browser's writable
  * stream uses an internal swap file and atomically replaces the target on
  * close — the same guarantee the spec's `db.json.tmp` + rename language
@@ -204,6 +223,27 @@ export async function saveToSyncFile(): Promise<SyncResult<SyncFileSnapshot>> {
       error: {
         kind: 'permission-lost',
         message: 'Write permission for the sync file was revoked. Re-grant access to save.',
+      },
+    };
+  }
+
+  // Re-read the on-disk envelope before overwriting. If a foreign session has
+  // advanced the file past the version we last synced, this is a genuine
+  // concurrent-edit conflict — refuse to clobber it and surface the conflict so
+  // the user can resolve it (issue #52). A missing/unparseable file (e.g. the
+  // very first save) is not a conflict.
+  const onDisk = await readOnDiskSyncVersion(row.handle);
+  if (
+    onDisk !== null &&
+    onDisk.writtenBy !== SESSION_ID &&
+    onDisk.syncVersion > row.lastSyncVersion
+  ) {
+    return {
+      data: null,
+      error: {
+        kind: 'conflict',
+        message:
+          'The sync file was changed by another session. Your local changes were not saved — reload to pull the latest, or use Save As to keep your copy.',
       },
     };
   }
@@ -247,6 +287,8 @@ export async function saveToSyncFile(): Promise<SyncResult<SyncFileSnapshot>> {
     lastSavedAt: Date.now(),
   };
   await db.syncFile.put(updated);
+  // The local DB is now persisted to the file — no edit is left un-flushed.
+  hasUnflushedWrites = false;
 
   // Update the cached mtime so the next poll's mtime-equal short-circuit
   // catches our own write without re-parsing the envelope. The writtenBy tag
@@ -269,8 +311,11 @@ export async function saveToSyncFile(): Promise<SyncResult<SyncFileSnapshot>> {
  *                   the in-memory DB is the source.
  * - 'reloaded'    — external bump detected; Dexie tables were atomically
  *                   replaced from the file.
+ * - 'conflict'    — external bump detected, but a local write is still
+ *                   un-flushed. The reload is held off so the local edit is not
+ *                   discarded; the conflict is surfaced for the user to resolve.
  */
-export type PollAction = 'no-change' | 'self-write' | 'local-ahead' | 'reloaded';
+export type PollAction = 'no-change' | 'self-write' | 'local-ahead' | 'reloaded' | 'conflict';
 
 export interface PollOutcome {
   action: PollAction;
@@ -347,7 +392,24 @@ export async function pollSyncFile(): Promise<SyncResult<PollOutcome>> {
     };
   }
 
-  const importResult = await importDatabase(parsed);
+  // An external bump is real. If a local edit is still un-flushed (or a flush is
+  // running), importing now would wholesale-replace Dexie and silently discard
+  // that edit (issue #52). Hold off the reload and surface a conflict instead;
+  // the pending write-through will refuse to clobber the newer file in turn.
+  if (hasUnflushedWrites || inFlight) {
+    return {
+      data: { action: 'conflict', syncVersion: parsed.syncVersion },
+      error: null,
+    };
+  }
+
+  reloadInFlight = true;
+  let importResult;
+  try {
+    importResult = await importDatabase(parsed);
+  } finally {
+    reloadInFlight = false;
+  }
   if (!importResult.ok) {
     return {
       data: null,
@@ -377,6 +439,10 @@ const BACKOFF_MS = [0, 600, 1200];
 let pendingTimer: ReturnType<typeof setTimeout> | null = null;
 let inFlight = false;
 let pendingAfterFlight = false;
+/** A local mutation has been committed to Dexie but not yet written to the file. */
+let hasUnflushedWrites = false;
+/** A poll-triggered reload is replacing Dexie tables; flushes must wait it out. */
+let reloadInFlight = false;
 
 type SyncErrorListener = (error: SyncError) => void;
 type SyncSuccessListener = (snapshot: SyncFileSnapshot) => void;
@@ -419,6 +485,7 @@ function notifyError(error: SyncError): void {
  * caller's Result<T> is not affected by the eventual write outcome.
  */
 export function enqueueSyncWrite(): void {
+  hasUnflushedWrites = true;
   if (pendingTimer !== null) {
     clearTimeout(pendingTimer);
   }
@@ -433,6 +500,12 @@ async function runFlush(): Promise<void> {
     // A flush is already running; record that more work arrived so we run
     // again after it completes. Otherwise we could lose the most recent edit.
     pendingAfterFlight = true;
+    return;
+  }
+  if (reloadInFlight) {
+    // A poll-triggered reload is replacing Dexie tables. Don't read a half-
+    // applied state — re-arm the debounce and let the reload finish first.
+    enqueueSyncWrite();
     return;
   }
   inFlight = true;
@@ -464,7 +537,8 @@ async function runFlush(): Promise<void> {
       if (
         result.error.kind === 'not-connected' ||
         result.error.kind === 'permission-lost' ||
-        result.error.kind === 'unsupported'
+        result.error.kind === 'unsupported' ||
+        result.error.kind === 'conflict'
       ) {
         break;
       }
@@ -502,6 +576,8 @@ function resetSyncQueueState(): void {
   }
   inFlight = false;
   pendingAfterFlight = false;
+  hasUnflushedWrites = false;
+  reloadInFlight = false;
   errorListeners.clear();
   successListeners.clear();
 }
@@ -542,6 +618,13 @@ export function startSyncPolling(opts: StartSyncPollingOptions = {}): () => void
         return;
       }
       if (result.data.action === 'reloaded') opts.onReload?.(result.data);
+      if (result.data.action === 'conflict') {
+        opts.onError?.({
+          kind: 'conflict',
+          message:
+            'The sync file changed while you had unsaved edits. Reload to pull the latest, or use Save As to keep your copy.',
+        });
+      }
     } finally {
       inFlight = false;
     }
