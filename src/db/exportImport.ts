@@ -6,6 +6,9 @@ import type {
   ChecklistItem,
   DependencyEdge,
   ProjectTemplate,
+  TaskStatus,
+  ProjectStatus,
+  RecurrenceFrequency,
 } from '../types';
 
 const CURRENT_VERSION = 3;
@@ -63,6 +66,74 @@ export type ImportResult =
   | { ok: true }
   | { ok: false; error: string };
 
+const TASK_STATUSES: readonly TaskStatus[] = ['open', 'completed', 'canceled'];
+const PROJECT_STATUSES: readonly ProjectStatus[] = ['active', 'completed', 'canceled', 'someday'];
+const RECURRENCE_FREQUENCIES: readonly RecurrenceFrequency[] = ['daily', 'weekly', 'monthly', 'yearly'];
+
+// Primitive field checks. Each returns true when the value is acceptable for
+// the field. Numbers must be finite so NaN/Infinity can't poison sort/date math.
+type FieldCheck = (value: unknown) => boolean;
+
+const str: FieldCheck = (v) => typeof v === 'string';
+const nonEmptyStr: FieldCheck = (v) => typeof v === 'string' && v.length > 0;
+const num: FieldCheck = (v) => typeof v === 'number' && Number.isFinite(v);
+const bool: FieldCheck = (v) => typeof v === 'boolean';
+const strOrNull: FieldCheck = (v) => v === null || typeof v === 'string';
+const numOrNull: FieldCheck = (v) => v === null || (typeof v === 'number' && Number.isFinite(v));
+const strArray: FieldCheck = (v) => Array.isArray(v) && v.every((x) => typeof x === 'string');
+const isArray: FieldCheck = (v) => Array.isArray(v);
+const oneOf =
+  (allowed: readonly string[]): FieldCheck =>
+  (v) => typeof v === 'string' && allowed.includes(v);
+
+// recurrence is absent on v2 payloads (backfilled to null by upgradePayload),
+// so undefined is tolerated. When present it must be a config with a valid
+// frequency enum, finite interval, and array of weekdays.
+const recurrenceField: FieldCheck = (v) => {
+  if (v === undefined || v === null) return true;
+  if (typeof v !== 'object') return false;
+  const r = v as Record<string, unknown>;
+  return oneOf(RECURRENCE_FREQUENCIES)(r.frequency) && num(r.interval) && Array.isArray(r.daysOfWeek);
+};
+// recurringParentId is also absent on v2 payloads.
+const recurringParentIdField: FieldCheck = (v) => v === undefined || strOrNull(v);
+
+type RecordSchema = Record<string, FieldCheck>;
+
+const SCHEMAS: Record<string, RecordSchema> = {
+  areas: { id: nonEmptyStr, title: str, sortOrder: num, createdAt: num, deletedAt: numOrNull },
+  projects: {
+    id: nonEmptyStr, title: str, notes: str, status: oneOf(PROJECT_STATUSES),
+    areaId: strOrNull, deadline: strOrNull, tags: strArray, sortOrder: num,
+    createdAt: num, completedAt: numOrNull, deletedAt: numOrNull,
+  },
+  tasks: {
+    id: nonEmptyStr, title: str, notes: str, status: oneOf(TASK_STATUSES),
+    when: strOrNull, deadline: strOrNull, tags: strArray, projectId: strOrNull,
+    areaId: strOrNull, sortOrder: num, createdAt: num, completedAt: numOrNull,
+    deletedAt: numOrNull, recurrence: recurrenceField, recurringParentId: recurringParentIdField,
+  },
+  checklistItems: { id: nonEmptyStr, taskId: nonEmptyStr, title: str, completed: bool, sortOrder: num },
+  dependencyEdges: { id: nonEmptyStr, fromTaskId: nonEmptyStr, toTaskId: nonEmptyStr, projectId: nonEmptyStr },
+  templates: { id: nonEmptyStr, name: str, builtIn: bool, tasks: isArray, edges: isArray },
+};
+
+function validateRecords(records: unknown[], schema: RecordSchema, table: string): string | null {
+  for (let i = 0; i < records.length; i++) {
+    const record = records[i];
+    if (!record || typeof record !== 'object') {
+      return `Invalid file: ${table}[${i}] is not an object.`;
+    }
+    const r = record as Record<string, unknown>;
+    for (const field in schema) {
+      if (!schema[field](r[field])) {
+        return `Invalid file: ${table}[${i}] has an invalid "${field}".`;
+      }
+    }
+  }
+  return null;
+}
+
 export function validateExport(data: unknown): ImportResult {
   if (!data || typeof data !== 'object') {
     return { ok: false, error: 'Invalid file: not a JSON object.' };
@@ -89,6 +160,10 @@ export function validateExport(data: unknown): ImportResult {
     if (!Array.isArray(tables[key])) {
       return { ok: false, error: `Invalid file: missing or invalid table "${key}".` };
     }
+  }
+  for (const key of required) {
+    const error = validateRecords(tables[key] as unknown[], SCHEMAS[key], key);
+    if (error) return { ok: false, error };
   }
   return { ok: true };
 }
