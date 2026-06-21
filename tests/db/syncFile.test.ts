@@ -571,6 +571,131 @@ describe('enqueueSyncWrite (debounced write-through)', () => {
   });
 });
 
+describe('write/reload coordination (issue #52)', () => {
+  /** Build a foreign sync envelope containing a single task, at a given version. */
+  function foreignEnvelope(syncVersion: number, taskTitle: string): SyncEnvelope {
+    const task: Task = {
+      id: `ext-${taskTitle}`,
+      title: taskTitle,
+      notes: '',
+      status: 'open',
+      when: null,
+      deadline: null,
+      tags: [],
+      projectId: null,
+      areaId: null,
+      sortOrder: 0,
+      createdAt: Date.now(),
+      completedAt: null,
+      deletedAt: null,
+      recurrence: null,
+      recurringParentId: null,
+    };
+    return {
+      app: 'pear-tasks',
+      version: 3,
+      exportedAt: new Date().toISOString(),
+      tables: {
+        areas: [],
+        projects: [],
+        tasks: [task],
+        checklistItems: [],
+        dependencyEdges: [],
+        templates: [],
+      },
+      syncVersion,
+      writtenBy: 'some-other-session',
+    };
+  }
+
+  it('does not reload over an un-flushed local edit — surfaces a conflict and keeps the edit', async () => {
+    const handle = makeFakeHandle('pear.json');
+    (globalThis as GlobalWithPicker).showSaveFilePicker = vi.fn(async () => handle);
+    await connectSyncFile();
+
+    // Establish a baseline the local DB is in sync with (version 1).
+    await createTask('Baseline');
+    await flushSyncWritesNow();
+    expect((await getSyncFileSnapshot())?.lastSyncVersion).toBe(1);
+
+    // Local edit lands in Dexie but its write-through is still pending.
+    await createTask('Concurrent local edit');
+
+    // An external writer bumps the file before the pending flush runs.
+    handle.externalWrite(JSON.stringify(foreignEnvelope(2, 'Task from MCP')));
+
+    // The poll tick sees the bump but must NOT clobber the un-flushed edit.
+    const poll = await pollSyncFile();
+    expect(poll.error).toBeNull();
+    expect(poll.data?.action).toBe('conflict');
+
+    // The local edit is still in Dexie — it was not discarded.
+    const titles = (await db.tasks.toArray()).map((t) => t.title);
+    expect(titles).toContain('Concurrent local edit');
+    expect(titles).not.toContain('Task from MCP');
+  });
+
+  it('the pending flush refuses to overwrite the newer external version', async () => {
+    const handle = makeFakeHandle('pear.json');
+    (globalThis as GlobalWithPicker).showSaveFilePicker = vi.fn(async () => handle);
+    await connectSyncFile();
+    await createTask('Baseline');
+    await flushSyncWritesNow();
+
+    await createTask('Concurrent local edit');
+    handle.externalWrite(JSON.stringify(foreignEnvelope(2, 'Task from MCP')));
+    await pollSyncFile();
+
+    const errors: SyncError[] = [];
+    const unsub = onSyncWriteError((e) => errors.push(e));
+    await flushSyncWritesNow();
+    unsub();
+
+    // The flush detected the newer foreign version and refused to write.
+    expect(errors).toHaveLength(1);
+    expect(errors[0].kind).toBe('conflict');
+    // The on-disk version was not bumped or overwritten.
+    expect(JSON.parse(handle.contents).syncVersion).toBe(2);
+    expect((await getSyncFileSnapshot())?.lastSyncVersion).toBe(1);
+    // The local edit still survives in Dexie.
+    expect((await db.tasks.toArray()).map((t) => t.title)).toContain('Concurrent local edit');
+  });
+
+  it('saveToSyncFile returns conflict when the on-disk version is newer and foreign', async () => {
+    const handle = makeFakeHandle('pear.json');
+    (globalThis as GlobalWithPicker).showSaveFilePicker = vi.fn(async () => handle);
+    await connectSyncFile();
+    await createTask('Baseline');
+    await saveToSyncFile();
+    expect((await getSyncFileSnapshot())?.lastSyncVersion).toBe(1);
+
+    // A foreign session writes a strictly newer version directly to the file.
+    handle.externalWrite(JSON.stringify(foreignEnvelope(5, 'Foreign edit')));
+
+    const result = await saveToSyncFile();
+    expect(result.error?.kind).toBe('conflict');
+    // We did not overwrite the foreign file nor bump our local version.
+    expect(JSON.parse(handle.contents).syncVersion).toBe(5);
+    expect((await getSyncFileSnapshot())?.lastSyncVersion).toBe(1);
+  });
+
+  it('still saves normally when the on-disk version is our own latest write', async () => {
+    const handle = makeFakeHandle('pear.json');
+    (globalThis as GlobalWithPicker).showSaveFilePicker = vi.fn(async () => handle);
+    await connectSyncFile();
+    await createTask('First');
+
+    const first = await saveToSyncFile();
+    expect(first.error).toBeNull();
+    expect(first.data?.lastSyncVersion).toBe(1);
+
+    // A second save re-reads the file (our own writtenBy) and proceeds.
+    const second = await saveToSyncFile();
+    expect(second.error).toBeNull();
+    expect(second.data?.lastSyncVersion).toBe(2);
+  });
+});
+
 describe('ensurePermission', () => {
   it('returns granted when the handle already has read-write permission', async () => {
     const handle = makeFakeHandle('x.json', { permission: 'granted' });
