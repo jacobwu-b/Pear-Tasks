@@ -280,16 +280,12 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   },
 
   completeTask: async (id) => {
-    // Enforce the invariant: blocked tasks cannot be completed until all
-    // predecessors are done (completed or canceled).
-    const deps = await resolveDepsForTask(id);
-    const isBlocked = deps.some(
-      (d) => d.direction === 'blockedBy' && d.task.status !== 'completed' && d.task.status !== 'canceled'
-    );
-    if (isBlocked) return;
-    // Use the recurrence-aware completion path. For non-recurring tasks it
-    // behaves identically to a plain status update.
-    await dbCompleteTaskWithRecurrence(id);
+    // The blocked-task invariant is enforced at the data layer (#49). If the
+    // task is blocked the call returns an error and nothing changed, so skip
+    // the refresh. For non-recurring tasks this behaves identically to a plain
+    // status update.
+    const result = await dbCompleteTaskWithRecurrence(id);
+    if (result.error) return;
     await get().refreshTasks();
   },
 
