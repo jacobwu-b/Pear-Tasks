@@ -418,4 +418,40 @@ describe('importDatabase', () => {
     expect(tasks).toHaveLength(1);
     expect(tasks[0].title).toBe('Existing Task');
   });
+
+  it('preserves the connected sync-file handle row across an import', async () => {
+    // Simulate a connected sync file: a persisted singleton handle row.
+    await db.syncFile.put({
+      id: 'singleton',
+      handle: {} as FileSystemFileHandle,
+      fileName: 'pear-db.json',
+      connectedAt: Date.now(),
+      lastSyncVersion: 4,
+      lastSavedAt: Date.now(),
+    });
+
+    const importData: PearExport = {
+      app: 'pear-tasks',
+      version: 3,
+      exportedAt: new Date().toISOString(),
+      tables: {
+        areas: [],
+        projects: [],
+        tasks: [],
+        checklistItems: [],
+        dependencyEdges: [],
+        templates: [],
+      },
+    };
+
+    const result = await importDatabase(importData);
+    expect(result).toEqual({ ok: true });
+
+    // The handle row — and its sync bookkeeping — must survive the import,
+    // otherwise the connection is silently destroyed (issue #51).
+    const row = await db.syncFile.get('singleton');
+    expect(row).toBeDefined();
+    expect(row!.fileName).toBe('pear-db.json');
+    expect(row!.lastSyncVersion).toBe(4);
+  });
 });
