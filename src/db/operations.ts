@@ -631,6 +631,21 @@ export async function completeTaskWithRecurrence(
   id: string,
 ): Promise<Result<{ completed: Task; spawned: Task | null }>> {
   return tryDb(async () => {
+    // Enforce the core invariant at the data layer (#49): a task blocked by an
+    // incomplete predecessor cannot be completed. This guard lives here — not
+    // only in the store — so non-UI write paths (pear-mcp) can't bypass it.
+    // getTaskDependencies already excludes edges to soft-deleted tasks (#20);
+    // a predecessor counts as "done" if it is completed or canceled.
+    const edges = await getTaskDependencies(id);
+    const predecessorIds = edges.filter((e) => e.toTaskId === id).map((e) => e.fromTaskId);
+    if (predecessorIds.length > 0) {
+      const predecessors = await db.tasks.where('id').anyOf(predecessorIds).toArray();
+      const isBlocked = predecessors.some(
+        (p) => p.status !== 'completed' && p.status !== 'canceled',
+      );
+      if (isBlocked) return err('Task is blocked by incomplete predecessors');
+    }
+
     // Complete the task
     await db.tasks.update(id, { status: 'completed', completedAt: Date.now() });
     const completed = await db.tasks.get(id);

@@ -28,6 +28,7 @@ import {
   removeDependencyByTasks,
   getDependencyEdges,
   getTaskDependencies,
+  completeTaskWithRecurrence,
   purgeOldTrash,
 } from '../../src/db/operations';
 
@@ -527,5 +528,77 @@ describe('Mutation error contract', () => {
     } as never);
     const result = await purgeOldTrash();
     expect(result).toEqual({ data: null, error: 'DatabaseClosedError' });
+  });
+});
+
+// ── Blocked-completion invariant (#49) ─────────────────────────────
+//
+// The core dependency invariant — a task blocked by an incomplete predecessor
+// cannot be completed — is enforced at the data layer so non-UI write paths
+// (e.g. pear-mcp) cannot bypass it. An edge fromTaskId -> toTaskId means
+// toTaskId is blocked by fromTaskId.
+
+describe('completeTaskWithRecurrence blocked-completion guard', () => {
+  it('returns an error when a predecessor is still open', async () => {
+    const { data: project } = await createProject('Launch');
+    const { data: pred } = await createTask('Write copy', { projectId: project!.id });
+    const { data: blocked } = await createTask('Publish', { projectId: project!.id });
+    await addDependency(pred!.id, blocked!.id, project!.id);
+
+    const result = await completeTaskWithRecurrence(blocked!.id);
+
+    expect(result.error).toBe('Task is blocked by incomplete predecessors');
+  });
+
+  it('does not mark a blocked task completed when the guard fires', async () => {
+    const { data: project } = await createProject('Launch');
+    const { data: pred } = await createTask('Write copy', { projectId: project!.id });
+    const { data: blocked } = await createTask('Publish', { projectId: project!.id });
+    await addDependency(pred!.id, blocked!.id, project!.id);
+
+    await completeTaskWithRecurrence(blocked!.id);
+
+    const after = await getTask(blocked!.id);
+    expect(after!.status).toBe('open');
+    expect(after!.completedAt).toBeNull();
+  });
+
+  it('completes the task once its predecessor is completed', async () => {
+    const { data: project } = await createProject('Launch');
+    const { data: pred } = await createTask('Write copy', { projectId: project!.id });
+    const { data: blocked } = await createTask('Publish', { projectId: project!.id });
+    await addDependency(pred!.id, blocked!.id, project!.id);
+    await updateTask(pred!.id, { status: 'completed', completedAt: Date.now() });
+
+    const result = await completeTaskWithRecurrence(blocked!.id);
+
+    expect(result.error).toBeNull();
+    expect(result.data!.completed.status).toBe('completed');
+  });
+
+  it('treats a canceled predecessor as done and allows completion', async () => {
+    const { data: project } = await createProject('Launch');
+    const { data: pred } = await createTask('Write copy', { projectId: project!.id });
+    const { data: blocked } = await createTask('Publish', { projectId: project!.id });
+    await addDependency(pred!.id, blocked!.id, project!.id);
+    await updateTask(pred!.id, { status: 'canceled', completedAt: Date.now() });
+
+    const result = await completeTaskWithRecurrence(blocked!.id);
+
+    expect(result.error).toBeNull();
+    expect(result.data!.completed.status).toBe('completed');
+  });
+
+  it('ignores a soft-deleted predecessor and allows completion', async () => {
+    const { data: project } = await createProject('Launch');
+    const { data: pred } = await createTask('Write copy', { projectId: project!.id });
+    const { data: blocked } = await createTask('Publish', { projectId: project!.id });
+    await addDependency(pred!.id, blocked!.id, project!.id);
+    await softDeleteTask(pred!.id);
+
+    const result = await completeTaskWithRecurrence(blocked!.id);
+
+    expect(result.error).toBeNull();
+    expect(result.data!.completed.status).toBe('completed');
   });
 });
