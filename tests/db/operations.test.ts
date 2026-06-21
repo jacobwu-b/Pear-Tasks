@@ -456,6 +456,77 @@ describe('Dependencies', () => {
     const depsAfterRestore = await getTaskDependencies(t2!.id);
     expect(depsAfterRestore).toHaveLength(1);
   });
+
+  it('does not create a cycle when two opposing edges are added concurrently', async () => {
+    const { data: project } = await createProject('P1');
+    const { data: t1 } = await createTask('T1', { projectId: project!.id });
+    const { data: t2 } = await createTask('T2', { projectId: project!.id });
+
+    // Two opposing edges raced together. Without an atomic read-check-write the
+    // TOCTOU gap lets both pass cycle detection and both insert, forming a cycle
+    // and violating the DAG invariant (CLAUDE.md §6).
+    const [a, b] = await Promise.all([
+      addDependency(t1!.id, t2!.id, project!.id),
+      addDependency(t2!.id, t1!.id, project!.id),
+    ]);
+
+    const succeeded = [a, b].filter((r) => r.error === null);
+    const rejected = [a, b].filter((r) => r.error !== null);
+    expect(succeeded).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0].error).toBe('This would create a circular dependency');
+
+    const edges = await getDependencyEdges(project!.id);
+    expect(edges).toHaveLength(1);
+  });
+
+  it('does not insert duplicate edges when the same edge is added concurrently', async () => {
+    const { data: project } = await createProject('P1');
+    const { data: t1 } = await createTask('T1', { projectId: project!.id });
+    const { data: t2 } = await createTask('T2', { projectId: project!.id });
+
+    const [a, b] = await Promise.all([
+      addDependency(t1!.id, t2!.id, project!.id),
+      addDependency(t1!.id, t2!.id, project!.id),
+    ]);
+
+    const succeeded = [a, b].filter((r) => r.error === null);
+    const rejected = [a, b].filter((r) => r.error !== null);
+    expect(succeeded).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0].error).toBe('Dependency already exists');
+
+    const edges = await getDependencyEdges(project!.id);
+    expect(edges).toHaveLength(1);
+  });
+});
+
+// ── Concurrent sortOrder ───────────────────────────────────────────
+
+describe('concurrent create* assign distinct sortOrder', () => {
+  it('assigns distinct sortOrder to concurrently created tasks', async () => {
+    const [a, b] = await Promise.all([createTask('A'), createTask('B')]);
+    expect(a.data!.sortOrder).not.toBe(b.data!.sortOrder);
+  });
+
+  it('assigns distinct sortOrder to concurrently created projects', async () => {
+    const [a, b] = await Promise.all([createProject('A'), createProject('B')]);
+    expect(a.data!.sortOrder).not.toBe(b.data!.sortOrder);
+  });
+
+  it('assigns distinct sortOrder to concurrently created areas', async () => {
+    const [a, b] = await Promise.all([createArea('A'), createArea('B')]);
+    expect(a.data!.sortOrder).not.toBe(b.data!.sortOrder);
+  });
+
+  it('assigns distinct sortOrder to concurrently added checklist items', async () => {
+    const { data: task } = await createTask('T1');
+    const [a, b] = await Promise.all([
+      addChecklistItem(task!.id, 'Step 1'),
+      addChecklistItem(task!.id, 'Step 2'),
+    ]);
+    expect(a.data!.sortOrder).not.toBe(b.data!.sortOrder);
+  });
 });
 
 // ── purgeOldTrash ──────────────────────────────────────────────────
