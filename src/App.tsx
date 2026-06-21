@@ -8,6 +8,7 @@ import DataManagement from './components/common/DataManagement'
 import SyncToast from './components/common/SyncToast'
 import { seedOnFirstLaunch } from './db/seed'
 import { seedBuiltInTemplates } from './db/templates'
+import { purgeOldTrash } from './db/operations'
 import { useUiStore } from './store/uiStore'
 import { useTaskStore } from './store/taskStore'
 import { useGlobalShortcuts } from './lib/keyboard'
@@ -45,6 +46,7 @@ function App() {
     Promise.all([
       seedOnFirstLaunch(),
       seedBuiltInTemplates(),
+      purgeOldTrash(),
       hydrateSyncFile(),
     ]).then(() => setReady(true))
   }, [hydrateSyncFile])

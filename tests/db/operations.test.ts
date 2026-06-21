@@ -482,6 +482,22 @@ describe('purgeOldTrash', () => {
     const edges = await db.dependencyEdges.where('projectId').equals(project!.id).toArray();
     expect(edges).toHaveLength(0);
   });
+
+  it('hard-purges expired soft-deleted areas while sparing recent ones', async () => {
+    const { data: oldArea } = await createArea('Archived Work');
+    const { data: recentArea } = await createArea('Personal');
+
+    await deleteArea(oldArea!.id);
+    await deleteArea(recentArea!.id);
+
+    const THIRTY_ONE_DAYS_MS = 31 * 24 * 60 * 60 * 1000;
+    await db.areas.update(oldArea!.id, { deletedAt: Date.now() - THIRTY_ONE_DAYS_MS });
+
+    await purgeOldTrash();
+
+    expect(await db.areas.get(oldArea!.id)).toBeUndefined();
+    expect(await db.areas.get(recentArea!.id)).toBeDefined();
+  });
 });
 
 // ── Mutation error contract (#48) ──────────────────────────────────
