@@ -118,6 +118,119 @@ describe('validateExport', () => {
   });
 });
 
+describe('validateExport per-record validation', () => {
+  const validTask = {
+    id: 'task-1',
+    title: 'Ship release',
+    notes: '',
+    status: 'open',
+    when: null,
+    deadline: null,
+    tags: ['work'],
+    projectId: null,
+    areaId: null,
+    sortOrder: 0,
+    createdAt: 1_700_000_000_000,
+    completedAt: null,
+    deletedAt: null,
+    recurrence: null,
+    recurringParentId: null,
+  };
+
+  function omit<T extends object>(obj: T, ...keys: (keyof T)[]): Partial<T> {
+    const copy = { ...obj };
+    for (const key of keys) delete copy[key];
+    return copy;
+  }
+
+  function envelopeWith(tableName: string, records: unknown[]) {
+    return {
+      app: 'pear-tasks',
+      version: 3,
+      exportedAt: new Date().toISOString(),
+      tables: {
+        areas: [], projects: [], tasks: [], checklistItems: [],
+        dependencyEdges: [], templates: [],
+        [tableName]: records,
+      },
+    };
+  }
+
+  it('accepts a fully-formed task record', () => {
+    expect(validateExport(envelopeWith('tasks', [validTask]))).toEqual({ ok: true });
+  });
+
+  it('rejects a task whose status is not a known enum value', () => {
+    const result = validateExport(envelopeWith('tasks', [{ ...validTask, status: 'archived' }]));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain('status');
+  });
+
+  it('rejects a task whose deletedAt is undefined rather than null', () => {
+    const result = validateExport(envelopeWith('tasks', [omit(validTask, 'deletedAt')]));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain('deletedAt');
+  });
+
+  it('rejects a task whose tags is not an array', () => {
+    const result = validateExport(envelopeWith('tasks', [{ ...validTask, tags: 'work' }]));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain('tags');
+  });
+
+  it('rejects a task that is missing its when field', () => {
+    const result = validateExport(envelopeWith('tasks', [omit(validTask, 'when')]));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain('when');
+  });
+
+  it('rejects a task with a missing id', () => {
+    const result = validateExport(envelopeWith('tasks', [omit(validTask, 'id')]));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain('id');
+  });
+
+  it('rejects a project whose status is out of enum', () => {
+    const badProject = {
+      id: 'project-1',
+      title: 'Website',
+      notes: '',
+      status: 'archived',
+      areaId: null,
+      deadline: null,
+      tags: [],
+      sortOrder: 0,
+      createdAt: 1_700_000_000_000,
+      completedAt: null,
+      deletedAt: null,
+    };
+    const result = validateExport(envelopeWith('projects', [badProject]));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain('status');
+  });
+
+  it('rejects a dependency edge that is missing its projectId', () => {
+    const badEdge = { id: 'edge-1', fromTaskId: 'a', toTaskId: 'b' };
+    const result = validateExport(envelopeWith('dependencyEdges', [badEdge]));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain('projectId');
+  });
+
+  it('tolerates v2 tasks that omit recurrence fields', () => {
+    const v2Task = omit(validTask, 'recurrence', 'recurringParentId');
+    const envelope = {
+      app: 'pear-tasks',
+      version: 2,
+      exportedAt: new Date().toISOString(),
+      tables: {
+        areas: [], projects: [], tasks: [v2Task], checklistItems: [],
+        dependencyEdges: [], templates: [],
+      },
+    };
+    expect(validateExport(envelope)).toEqual({ ok: true });
+  });
+});
+
 describe('importDatabase', () => {
   it('replaces all data with the imported data', async () => {
     // Pre-populate with existing data that should be wiped.
@@ -255,6 +368,51 @@ describe('importDatabase', () => {
     expect(result.ok).toBe(false);
 
     // Data should still be intact.
+    const { getInboxTasks } = await import('../../src/db/operations');
+    const tasks = await getInboxTasks();
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].title).toBe('Existing Task');
+  });
+
+  it('rejects a malformed record without modifying the database', async () => {
+    await createTask('Existing Task');
+
+    // A record with a valid id but a corrupt deletedAt — the exact shape the
+    // sync poller would otherwise auto-apply, silently hiding the row from views.
+    const malformed = {
+      app: 'pear-tasks',
+      version: 3,
+      exportedAt: new Date().toISOString(),
+      tables: {
+        areas: [],
+        projects: [],
+        tasks: [{
+          id: 'corrupt-task',
+          title: 'Corrupt Task',
+          notes: '',
+          status: 'open',
+          when: null,
+          deadline: null,
+          tags: [],
+          projectId: null,
+          areaId: null,
+          sortOrder: 0,
+          createdAt: Date.now(),
+          completedAt: null,
+          deletedAt: undefined,
+          recurrence: null,
+          recurringParentId: null,
+        }],
+        checklistItems: [],
+        dependencyEdges: [],
+        templates: [],
+      },
+    } as unknown as PearExport;
+
+    const result = await importDatabase(malformed);
+    expect(result.ok).toBe(false);
+
+    // The pre-existing data must be untouched — no clear(), no partial write.
     const { getInboxTasks } = await import('../../src/db/operations');
     const tasks = await getInboxTasks();
     expect(tasks).toHaveLength(1);
