@@ -193,9 +193,21 @@ export async function importDatabase(data: PearExport): Promise<ImportResult> {
 
   const upgraded = upgradePayload(data);
 
+  // Scope the replace to the six data tables only. The syncFile table holds the
+  // connected file handle and its bookkeeping; clearing it here would silently
+  // destroy an active sync connection (issue #51).
+  const dataTables = [
+    db.areas,
+    db.projects,
+    db.tasks,
+    db.checklistItems,
+    db.dependencyEdges,
+    db.templates,
+  ];
+
   try {
-    await db.transaction('rw', db.tables, async () => {
-      for (const table of db.tables) {
+    await db.transaction('rw', dataTables, async () => {
+      for (const table of dataTables) {
         await table.clear();
       }
       const t = upgraded.tables;
