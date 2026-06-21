@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { db } from '../../src/db/schema';
 import {
   createArea,
@@ -480,5 +480,52 @@ describe('purgeOldTrash', () => {
     // The edge was cleaned up when t1 was purged
     const edges = await db.dependencyEdges.where('projectId').equals(project!.id).toArray();
     expect(edges).toHaveLength(0);
+  });
+});
+
+// ── Mutation error contract (#48) ──────────────────────────────────
+// CLAUDE.md §6: mutations must return { data, error } and never throw, even
+// when Dexie rejects (QuotaExceededError, DatabaseClosedError, etc.).
+
+describe('Mutation error contract', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('createTask returns error instead of throwing when Dexie rejects', async () => {
+    vi.spyOn(db.tasks, 'add').mockRejectedValueOnce(new Error('QuotaExceededError'));
+    const result = await createTask('Buy milk');
+    expect(result).toEqual({ data: null, error: 'QuotaExceededError' });
+  });
+
+  it('updateTask returns error instead of throwing when Dexie rejects', async () => {
+    const { data: task } = await createTask('Original');
+    vi.spyOn(db.tasks, 'update').mockRejectedValueOnce(new Error('DatabaseClosedError'));
+    const result = await updateTask(task!.id, { title: 'Renamed' });
+    expect(result).toEqual({ data: null, error: 'DatabaseClosedError' });
+  });
+
+  it('softDeleteTask returns error instead of throwing when Dexie rejects', async () => {
+    const { data: task } = await createTask('Doomed');
+    vi.spyOn(db.tasks, 'update').mockRejectedValueOnce(new Error('ConstraintError'));
+    const result = await softDeleteTask(task!.id);
+    expect(result).toEqual({ data: null, error: 'ConstraintError' });
+  });
+
+  it('addDependency returns error instead of throwing when Dexie rejects', async () => {
+    const { data: project } = await createProject('Launch');
+    const { data: t1 } = await createTask('First', { projectId: project!.id });
+    const { data: t2 } = await createTask('Second', { projectId: project!.id });
+    vi.spyOn(db.dependencyEdges, 'add').mockRejectedValueOnce(new Error('QuotaExceededError'));
+    const result = await addDependency(t1!.id, t2!.id, project!.id);
+    expect(result).toEqual({ data: null, error: 'QuotaExceededError' });
+  });
+
+  it('purgeOldTrash returns error instead of throwing when Dexie rejects', async () => {
+    vi.spyOn(db.tasks, 'filter').mockReturnValueOnce({
+      toArray: () => Promise.reject(new Error('DatabaseClosedError')),
+    } as never);
+    const result = await purgeOldTrash();
+    expect(result).toEqual({ data: null, error: 'DatabaseClosedError' });
   });
 });

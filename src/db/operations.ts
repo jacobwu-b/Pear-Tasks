@@ -22,6 +22,17 @@ function err<T>(message: string): Result<T> {
   return { data: null, error: message };
 }
 
+// Runs a mutation body, converting any Dexie rejection (QuotaExceededError,
+// DatabaseClosedError, ConstraintError, …) into an err() so mutations honor the
+// { data, error } contract instead of throwing (CLAUDE.md §6).
+async function tryDb<T>(fn: () => Promise<Result<T>>): Promise<Result<T>> {
+  try {
+    return await fn();
+  } catch (e) {
+    return err(e instanceof Error ? e.message : String(e));
+  }
+}
+
 function generateId(): string {
   return crypto.randomUUID();
 }
@@ -31,41 +42,47 @@ function generateId(): string {
 export async function createArea(
   title: string
 ): Promise<Result<Area>> {
-  const maxOrder = await db.areas.orderBy('sortOrder').last();
-  const area: Area = {
-    id: generateId(),
-    title,
-    sortOrder: (maxOrder?.sortOrder ?? -1) + 1,
-    createdAt: Date.now(),
-    deletedAt: null,
-  };
-  await db.areas.add(area);
-  enqueueSyncWrite();
-  return ok(area);
+  return tryDb(async () => {
+    const maxOrder = await db.areas.orderBy('sortOrder').last();
+    const area: Area = {
+      id: generateId(),
+      title,
+      sortOrder: (maxOrder?.sortOrder ?? -1) + 1,
+      createdAt: Date.now(),
+      deletedAt: null,
+    };
+    await db.areas.add(area);
+    enqueueSyncWrite();
+    return ok(area);
+  });
 }
 
 export async function updateArea(
   id: string,
   changes: Partial<Pick<Area, 'title' | 'sortOrder'>>
 ): Promise<Result<Area>> {
-  await db.areas.update(id, changes);
-  const area = await db.areas.get(id);
-  if (!area) return err('Area not found');
-  enqueueSyncWrite();
-  return ok(area);
+  return tryDb(async () => {
+    await db.areas.update(id, changes);
+    const area = await db.areas.get(id);
+    if (!area) return err('Area not found');
+    enqueueSyncWrite();
+    return ok(area);
+  });
 }
 
 export async function deleteArea(id: string): Promise<Result<void>> {
-  // Soft delete: mark the area deleted but keep the row so we could
-  // theoretically restore it later. No purge schedule (per product decision).
-  await db.areas.update(id, { deletedAt: Date.now() });
-  // Orphan projects — set their areaId to null so they appear in "No Area"
-  await db.projects.where('areaId').equals(id).modify({ areaId: null });
-  // Orphan loose tasks under this area so they remain reachable via
-  // Inbox / Today / Anytime depending on their "when" field.
-  await db.tasks.where('areaId').equals(id).modify({ areaId: null });
-  enqueueSyncWrite();
-  return ok(undefined);
+  return tryDb(async () => {
+    // Soft delete: mark the area deleted but keep the row so we could
+    // theoretically restore it later. No purge schedule (per product decision).
+    await db.areas.update(id, { deletedAt: Date.now() });
+    // Orphan projects — set their areaId to null so they appear in "No Area"
+    await db.projects.where('areaId').equals(id).modify({ areaId: null });
+    // Orphan loose tasks under this area so they remain reachable via
+    // Inbox / Today / Anytime depending on their "when" field.
+    await db.tasks.where('areaId').equals(id).modify({ areaId: null });
+    enqueueSyncWrite();
+    return ok(undefined);
+  });
 }
 
 export async function getAreas(): Promise<Area[]> {
@@ -81,53 +98,61 @@ export async function createProject(
   title: string,
   areaId: string | null = null
 ): Promise<Result<Project>> {
-  const maxOrder = await db.projects.orderBy('sortOrder').last();
-  const project: Project = {
-    id: generateId(),
-    title,
-    notes: '',
-    status: 'active',
-    areaId,
-    deadline: null,
-    tags: [],
-    sortOrder: (maxOrder?.sortOrder ?? -1) + 1,
-    createdAt: Date.now(),
-    completedAt: null,
-    deletedAt: null,
-  };
-  await db.projects.add(project);
-  enqueueSyncWrite();
-  return ok(project);
+  return tryDb(async () => {
+    const maxOrder = await db.projects.orderBy('sortOrder').last();
+    const project: Project = {
+      id: generateId(),
+      title,
+      notes: '',
+      status: 'active',
+      areaId,
+      deadline: null,
+      tags: [],
+      sortOrder: (maxOrder?.sortOrder ?? -1) + 1,
+      createdAt: Date.now(),
+      completedAt: null,
+      deletedAt: null,
+    };
+    await db.projects.add(project);
+    enqueueSyncWrite();
+    return ok(project);
+  });
 }
 
 export async function updateProject(
   id: string,
   changes: Partial<Omit<Project, 'id' | 'createdAt'>>
 ): Promise<Result<Project>> {
-  // Auto-set completedAt when status changes to completed
-  if (changes.status === 'completed' && !changes.completedAt) {
-    changes.completedAt = Date.now();
-  }
-  await db.projects.update(id, changes);
-  const project = await db.projects.get(id);
-  if (!project) return err('Project not found');
-  enqueueSyncWrite();
-  return ok(project);
+  return tryDb(async () => {
+    // Auto-set completedAt when status changes to completed
+    if (changes.status === 'completed' && !changes.completedAt) {
+      changes.completedAt = Date.now();
+    }
+    await db.projects.update(id, changes);
+    const project = await db.projects.get(id);
+    if (!project) return err('Project not found');
+    enqueueSyncWrite();
+    return ok(project);
+  });
 }
 
 export async function softDeleteProject(id: string): Promise<Result<void>> {
-  await db.projects.update(id, { deletedAt: Date.now() });
-  // Soft-delete all tasks in the project
-  await db.tasks.where('projectId').equals(id).modify({ deletedAt: Date.now() });
-  enqueueSyncWrite();
-  return ok(undefined);
+  return tryDb(async () => {
+    await db.projects.update(id, { deletedAt: Date.now() });
+    // Soft-delete all tasks in the project
+    await db.tasks.where('projectId').equals(id).modify({ deletedAt: Date.now() });
+    enqueueSyncWrite();
+    return ok(undefined);
+  });
 }
 
 export async function restoreProject(id: string): Promise<Result<void>> {
-  await db.projects.update(id, { deletedAt: null });
-  await db.tasks.where('projectId').equals(id).modify({ deletedAt: null });
-  enqueueSyncWrite();
-  return ok(undefined);
+  return tryDb(async () => {
+    await db.projects.update(id, { deletedAt: null });
+    await db.tasks.where('projectId').equals(id).modify({ deletedAt: null });
+    enqueueSyncWrite();
+    return ok(undefined);
+  });
 }
 
 export async function getProjects(includeDeleted = false): Promise<Project[]> {
@@ -151,78 +176,88 @@ export async function createTask(
     Pick<Task, 'projectId' | 'areaId' | 'when' | 'deadline' | 'tags' | 'notes' | 'recurrence' | 'recurringParentId'>
   > = {}
 ): Promise<Result<Task>> {
-  const maxOrder = await db.tasks.orderBy('sortOrder').last();
-  const task: Task = {
-    id: generateId(),
-    title,
-    notes: options.notes ?? '',
-    status: 'open',
-    when: options.when ?? null,
-    deadline: options.deadline ?? null,
-    tags: options.tags ?? [],
-    projectId: options.projectId ?? null,
-    areaId: options.areaId ?? null,
-    sortOrder: (maxOrder?.sortOrder ?? -1) + 1,
-    createdAt: Date.now(),
-    completedAt: null,
-    deletedAt: null,
-    recurrence: options.recurrence ?? null,
-    recurringParentId: options.recurringParentId ?? null,
-  };
-  await db.tasks.add(task);
-  enqueueSyncWrite();
-  return ok(task);
+  return tryDb(async () => {
+    const maxOrder = await db.tasks.orderBy('sortOrder').last();
+    const task: Task = {
+      id: generateId(),
+      title,
+      notes: options.notes ?? '',
+      status: 'open',
+      when: options.when ?? null,
+      deadline: options.deadline ?? null,
+      tags: options.tags ?? [],
+      projectId: options.projectId ?? null,
+      areaId: options.areaId ?? null,
+      sortOrder: (maxOrder?.sortOrder ?? -1) + 1,
+      createdAt: Date.now(),
+      completedAt: null,
+      deletedAt: null,
+      recurrence: options.recurrence ?? null,
+      recurringParentId: options.recurringParentId ?? null,
+    };
+    await db.tasks.add(task);
+    enqueueSyncWrite();
+    return ok(task);
+  });
 }
 
 export async function updateTask(
   id: string,
   changes: Partial<Omit<Task, 'id' | 'createdAt'>>
 ): Promise<Result<Task>> {
-  if (changes.status === 'completed' && !changes.completedAt) {
-    changes.completedAt = Date.now();
-  }
-  await db.tasks.update(id, changes);
-  const task = await db.tasks.get(id);
-  if (!task) return err('Task not found');
-  enqueueSyncWrite();
-  return ok(task);
+  return tryDb(async () => {
+    if (changes.status === 'completed' && !changes.completedAt) {
+      changes.completedAt = Date.now();
+    }
+    await db.tasks.update(id, changes);
+    const task = await db.tasks.get(id);
+    if (!task) return err('Task not found');
+    enqueueSyncWrite();
+    return ok(task);
+  });
 }
 
 export async function softDeleteTask(id: string): Promise<Result<void>> {
-  // Edges are intentionally preserved so that restoreTask can bring the full
-  // dependency graph back. Live queries filter out edges involving deleted
-  // tasks. Edges are only hard-deleted when the task is purged from Trash.
-  await db.tasks.update(id, { deletedAt: Date.now() });
-  enqueueSyncWrite();
-  return ok(undefined);
+  return tryDb(async () => {
+    // Edges are intentionally preserved so that restoreTask can bring the full
+    // dependency graph back. Live queries filter out edges involving deleted
+    // tasks. Edges are only hard-deleted when the task is purged from Trash.
+    await db.tasks.update(id, { deletedAt: Date.now() });
+    enqueueSyncWrite();
+    return ok(undefined);
+  });
 }
 
 export async function restoreTask(id: string): Promise<Result<void>> {
-  await db.tasks.update(id, { deletedAt: null });
-  enqueueSyncWrite();
-  return ok(undefined);
+  return tryDb(async () => {
+    await db.tasks.update(id, { deletedAt: null });
+    enqueueSyncWrite();
+    return ok(undefined);
+  });
 }
 
 export async function moveTaskToProject(
   taskId: string,
   projectId: string | null
 ): Promise<Result<Task>> {
-  const task = await db.tasks.get(taskId);
-  if (!task) return err('Task not found');
+  return tryDb(async () => {
+    const task = await db.tasks.get(taskId);
+    if (!task) return err('Task not found');
 
-  // Remove dependency edges when moving out of a project (PRD §4.3).
-  // Indexed lookups per #11.
-  if (task.projectId && task.projectId !== projectId) {
-    await Promise.all([
-      db.dependencyEdges.where('fromTaskId').equals(taskId).delete(),
-      db.dependencyEdges.where('toTaskId').equals(taskId).delete(),
-    ]);
-  }
+    // Remove dependency edges when moving out of a project (PRD §4.3).
+    // Indexed lookups per #11.
+    if (task.projectId && task.projectId !== projectId) {
+      await Promise.all([
+        db.dependencyEdges.where('fromTaskId').equals(taskId).delete(),
+        db.dependencyEdges.where('toTaskId').equals(taskId).delete(),
+      ]);
+    }
 
-  await db.tasks.update(taskId, { projectId, areaId: null });
-  const updated = await db.tasks.get(taskId);
-  enqueueSyncWrite();
-  return ok(updated!);
+    await db.tasks.update(taskId, { projectId, areaId: null });
+    const updated = await db.tasks.get(taskId);
+    enqueueSyncWrite();
+    return ok(updated!);
+  });
 }
 
 export async function getTask(id: string): Promise<Task | undefined> {
@@ -380,39 +415,45 @@ export async function addChecklistItem(
   taskId: string,
   title: string
 ): Promise<Result<ChecklistItem>> {
-  const existing = await db.checklistItems
-    .where('taskId')
-    .equals(taskId)
-    .sortBy('sortOrder');
-  const maxOrder = existing.length > 0 ? existing[existing.length - 1].sortOrder : -1;
+  return tryDb(async () => {
+    const existing = await db.checklistItems
+      .where('taskId')
+      .equals(taskId)
+      .sortBy('sortOrder');
+    const maxOrder = existing.length > 0 ? existing[existing.length - 1].sortOrder : -1;
 
-  const item: ChecklistItem = {
-    id: generateId(),
-    taskId,
-    title,
-    completed: false,
-    sortOrder: maxOrder + 1,
-  };
-  await db.checklistItems.add(item);
-  enqueueSyncWrite();
-  return ok(item);
+    const item: ChecklistItem = {
+      id: generateId(),
+      taskId,
+      title,
+      completed: false,
+      sortOrder: maxOrder + 1,
+    };
+    await db.checklistItems.add(item);
+    enqueueSyncWrite();
+    return ok(item);
+  });
 }
 
 export async function updateChecklistItem(
   id: string,
   changes: Partial<Pick<ChecklistItem, 'title' | 'completed' | 'sortOrder'>>
 ): Promise<Result<ChecklistItem>> {
-  await db.checklistItems.update(id, changes);
-  const item = await db.checklistItems.get(id);
-  if (!item) return err('Checklist item not found');
-  enqueueSyncWrite();
-  return ok(item);
+  return tryDb(async () => {
+    await db.checklistItems.update(id, changes);
+    const item = await db.checklistItems.get(id);
+    if (!item) return err('Checklist item not found');
+    enqueueSyncWrite();
+    return ok(item);
+  });
 }
 
 export async function deleteChecklistItem(id: string): Promise<Result<void>> {
-  await db.checklistItems.delete(id);
-  enqueueSyncWrite();
-  return ok(undefined);
+  return tryDb(async () => {
+    await db.checklistItems.delete(id);
+    enqueueSyncWrite();
+    return ok(undefined);
+  });
 }
 
 export async function getChecklistItems(taskId: string): Promise<ChecklistItem[]> {
@@ -429,63 +470,69 @@ export async function addDependency(
   toTaskId: string,
   projectId: string
 ): Promise<Result<DependencyEdge>> {
-  // Validate both tasks exist and are in the same project
-  const [fromTask, toTask] = await Promise.all([
-    db.tasks.get(fromTaskId),
-    db.tasks.get(toTaskId),
-  ]);
-  if (!fromTask || !toTask) return err('One or both tasks not found');
-  if (fromTask.projectId !== projectId || toTask.projectId !== projectId) {
-    return err('Both tasks must be in the same project');
-  }
+  return tryDb(async () => {
+    // Validate both tasks exist and are in the same project
+    const [fromTask, toTask] = await Promise.all([
+      db.tasks.get(fromTaskId),
+      db.tasks.get(toTaskId),
+    ]);
+    if (!fromTask || !toTask) return err('One or both tasks not found');
+    if (fromTask.projectId !== projectId || toTask.projectId !== projectId) {
+      return err('Both tasks must be in the same project');
+    }
 
-  // Check for duplicate via indexed lookup (#11).
-  const existing = await db.dependencyEdges
-    .where('fromTaskId')
-    .equals(fromTaskId)
-    .and((e) => e.toTaskId === toTaskId)
-    .first();
-  if (existing) return err('Dependency already exists');
+    // Check for duplicate via indexed lookup (#11).
+    const existing = await db.dependencyEdges
+      .where('fromTaskId')
+      .equals(fromTaskId)
+      .and((e) => e.toTaskId === toTaskId)
+      .first();
+    if (existing) return err('Dependency already exists');
 
-  // Cycle detection
-  const edges = await db.dependencyEdges
-    .where('projectId')
-    .equals(projectId)
-    .toArray();
+    // Cycle detection
+    const edges = await db.dependencyEdges
+      .where('projectId')
+      .equals(projectId)
+      .toArray();
 
-  if (wouldCreateCycle(edges, fromTaskId, toTaskId)) {
-    return err('This would create a circular dependency');
-  }
+    if (wouldCreateCycle(edges, fromTaskId, toTaskId)) {
+      return err('This would create a circular dependency');
+    }
 
-  const edge: DependencyEdge = {
-    id: generateId(),
-    fromTaskId,
-    toTaskId,
-    projectId,
-  };
-  await db.dependencyEdges.add(edge);
-  enqueueSyncWrite();
-  return ok(edge);
+    const edge: DependencyEdge = {
+      id: generateId(),
+      fromTaskId,
+      toTaskId,
+      projectId,
+    };
+    await db.dependencyEdges.add(edge);
+    enqueueSyncWrite();
+    return ok(edge);
+  });
 }
 
 export async function removeDependency(id: string): Promise<Result<void>> {
-  await db.dependencyEdges.delete(id);
-  enqueueSyncWrite();
-  return ok(undefined);
+  return tryDb(async () => {
+    await db.dependencyEdges.delete(id);
+    enqueueSyncWrite();
+    return ok(undefined);
+  });
 }
 
 export async function removeDependencyByTasks(
   fromTaskId: string,
   toTaskId: string
 ): Promise<Result<void>> {
-  // Indexed lookup on fromTaskId, then narrow by toTaskId (#11).
-  await db.dependencyEdges
-    .where('fromTaskId')
-    .equals(fromTaskId)
-    .and((e) => e.toTaskId === toTaskId)
-    .delete();
-  enqueueSyncWrite();
-  return ok(undefined);
+  return tryDb(async () => {
+    // Indexed lookup on fromTaskId, then narrow by toTaskId (#11).
+    await db.dependencyEdges
+      .where('fromTaskId')
+      .equals(fromTaskId)
+      .and((e) => e.toTaskId === toTaskId)
+      .delete();
+    enqueueSyncWrite();
+    return ok(undefined);
+  });
 }
 
 export async function getDependencyEdges(projectId: string): Promise<DependencyEdge[]> {
@@ -530,44 +577,46 @@ export async function getTaskDependencies(taskId: string): Promise<DependencyEdg
  * no recurrence config).
  */
 export async function spawnNextRecurrence(completedTask: Task): Promise<Result<Task | null>> {
-  if (!completedTask.recurrence) {
-    return ok(null);
-  }
+  return tryDb(async () => {
+    if (!completedTask.recurrence) {
+      return ok(null);
+    }
 
-  // Use the task's scheduled date as the reference point for "next occurrence".
-  // If the task has no date (null) or is marked someday, fall back to today so
-  // that completion still spawns a sensible next instance.
-  const fromDate =
-    completedTask.when && completedTask.when !== 'someday'
-      ? (completedTask.when as string)
-      : getLocalTodayDateString();
+    // Use the task's scheduled date as the reference point for "next occurrence".
+    // If the task has no date (null) or is marked someday, fall back to today so
+    // that completion still spawns a sensible next instance.
+    const fromDate =
+      completedTask.when && completedTask.when !== 'someday'
+        ? (completedTask.when as string)
+        : getLocalTodayDateString();
 
-  const nextDate = computeNextOccurrence(completedTask.recurrence, fromDate);
-  if (!nextDate) return ok(null);
+    const nextDate = computeNextOccurrence(completedTask.recurrence, fromDate);
+    if (!nextDate) return ok(null);
 
-  const maxOrder = await db.tasks.orderBy('sortOrder').last();
-  const newTask: Task = {
-    id: generateId(),
-    title:            completedTask.title,
-    notes:            completedTask.notes,
-    status:           'open',
-    when:             nextDate,
-    deadline:         completedTask.deadline,
-    tags:             [...completedTask.tags],
-    projectId:        completedTask.projectId,
-    areaId:           completedTask.areaId,
-    sortOrder:        (maxOrder?.sortOrder ?? -1) + 1,
-    createdAt:        Date.now(),
-    completedAt:      null,
-    deletedAt:        null,
-    recurrence:       completedTask.recurrence,
-    // Chain: always point back to the root ancestor, not the intermediate instance.
-    recurringParentId: completedTask.recurringParentId ?? completedTask.id,
-  };
+    const maxOrder = await db.tasks.orderBy('sortOrder').last();
+    const newTask: Task = {
+      id: generateId(),
+      title:            completedTask.title,
+      notes:            completedTask.notes,
+      status:           'open',
+      when:             nextDate,
+      deadline:         completedTask.deadline,
+      tags:             [...completedTask.tags],
+      projectId:        completedTask.projectId,
+      areaId:           completedTask.areaId,
+      sortOrder:        (maxOrder?.sortOrder ?? -1) + 1,
+      createdAt:        Date.now(),
+      completedAt:      null,
+      deletedAt:        null,
+      recurrence:       completedTask.recurrence,
+      // Chain: always point back to the root ancestor, not the intermediate instance.
+      recurringParentId: completedTask.recurringParentId ?? completedTask.id,
+    };
 
-  await db.tasks.add(newTask);
-  enqueueSyncWrite();
-  return ok(newTask);
+    await db.tasks.add(newTask);
+    enqueueSyncWrite();
+    return ok(newTask);
+  });
 }
 
 /**
@@ -581,15 +630,17 @@ export async function spawnNextRecurrence(completedTask: Task): Promise<Result<T
 export async function completeTaskWithRecurrence(
   id: string,
 ): Promise<Result<{ completed: Task; spawned: Task | null }>> {
-  // Complete the task
-  await db.tasks.update(id, { status: 'completed', completedAt: Date.now() });
-  const completed = await db.tasks.get(id);
-  if (!completed) return err('Task not found after update');
+  return tryDb(async () => {
+    // Complete the task
+    await db.tasks.update(id, { status: 'completed', completedAt: Date.now() });
+    const completed = await db.tasks.get(id);
+    if (!completed) return err('Task not found after update');
 
-  // Spawn next occurrence if recurring
-  const spawnResult = await spawnNextRecurrence(completed);
-  enqueueSyncWrite();
-  return ok({ completed, spawned: spawnResult.data });
+    // Spawn next occurrence if recurring
+    const spawnResult = await spawnNextRecurrence(completed);
+    enqueueSyncWrite();
+    return ok({ completed, spawned: spawnResult.data });
+  });
 }
 
 /**
@@ -608,25 +659,27 @@ export async function updateTaskForward(
   fromWhen: string,
   changes: Partial<Omit<Task, 'id' | 'createdAt'>>,
 ): Promise<Result<void>> {
-  // Update the task being edited directly.
-  await db.tasks.update(taskId, changes);
+  return tryDb(async () => {
+    // Update the task being edited directly.
+    await db.tasks.update(taskId, changes);
 
-  // Update all open siblings at or after fromWhen.
-  await db.tasks
-    .where('recurringParentId')
-    .equals(rootId)
-    .filter(
-      (t) =>
-        t.id !== taskId &&
-        t.status === 'open' &&
-        t.when !== null &&
-        t.when !== 'someday' &&
-        (t.when as string) >= fromWhen,
-    )
-    .modify(changes);
+    // Update all open siblings at or after fromWhen.
+    await db.tasks
+      .where('recurringParentId')
+      .equals(rootId)
+      .filter(
+        (t) =>
+          t.id !== taskId &&
+          t.status === 'open' &&
+          t.when !== null &&
+          t.when !== 'someday' &&
+          (t.when as string) >= fromWhen,
+      )
+      .modify(changes);
 
-  enqueueSyncWrite();
-  return ok(undefined);
+    enqueueSyncWrite();
+    return ok(undefined);
+  });
 }
 
 /**
@@ -644,26 +697,28 @@ export async function updateRecurrenceForward(
   fromWhen: string,
   recurrence: RecurrenceConfig | null,
 ): Promise<Result<void>> {
-  // Update the task being edited directly (it may be the root, which has
-  // recurringParentId === null and therefore won't match the index query).
-  await db.tasks.update(taskId, { recurrence });
+  return tryDb(async () => {
+    // Update the task being edited directly (it may be the root, which has
+    // recurringParentId === null and therefore won't match the index query).
+    await db.tasks.update(taskId, { recurrence });
 
-  // Update all open siblings at or after fromWhen.
-  await db.tasks
-    .where('recurringParentId')
-    .equals(rootId)
-    .filter(
-      (t) =>
-        t.id !== taskId &&
-        t.status === 'open' &&
-        t.when !== null &&
-        t.when !== 'someday' &&
-        (t.when as string) >= fromWhen,
-    )
-    .modify({ recurrence });
+    // Update all open siblings at or after fromWhen.
+    await db.tasks
+      .where('recurringParentId')
+      .equals(rootId)
+      .filter(
+        (t) =>
+          t.id !== taskId &&
+          t.status === 'open' &&
+          t.when !== null &&
+          t.when !== 'someday' &&
+          (t.when as string) >= fromWhen,
+      )
+      .modify({ recurrence });
 
-  enqueueSyncWrite();
-  return ok(undefined);
+    enqueueSyncWrite();
+    return ok(undefined);
+  });
 }
 
 /**
@@ -679,24 +734,26 @@ export async function getRecurringFamily(rootId: string): Promise<Task[]> {
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
 export async function purgeOldTrash(): Promise<Result<void>> {
-  const cutoff = Date.now() - THIRTY_DAYS_MS;
+  return tryDb(async () => {
+    const cutoff = Date.now() - THIRTY_DAYS_MS;
 
-  // Collect task IDs about to be hard-deleted so we can remove their edges.
-  // Edges survive soft-delete to support restore (#20); they must be cleaned
-  // up here to avoid leaking orphaned rows.
-  const expiredTasks = await db.tasks
-    .filter((t) => t.deletedAt !== null && t.deletedAt < cutoff)
-    .toArray();
-  if (expiredTasks.length > 0) {
-    const expiredIds = expiredTasks.map((t) => t.id);
-    await Promise.all([
-      db.dependencyEdges.where('fromTaskId').anyOf(expiredIds).delete(),
-      db.dependencyEdges.where('toTaskId').anyOf(expiredIds).delete(),
-    ]);
-    await db.tasks.where('id').anyOf(expiredIds).delete();
-  }
+    // Collect task IDs about to be hard-deleted so we can remove their edges.
+    // Edges survive soft-delete to support restore (#20); they must be cleaned
+    // up here to avoid leaking orphaned rows.
+    const expiredTasks = await db.tasks
+      .filter((t) => t.deletedAt !== null && t.deletedAt < cutoff)
+      .toArray();
+    if (expiredTasks.length > 0) {
+      const expiredIds = expiredTasks.map((t) => t.id);
+      await Promise.all([
+        db.dependencyEdges.where('fromTaskId').anyOf(expiredIds).delete(),
+        db.dependencyEdges.where('toTaskId').anyOf(expiredIds).delete(),
+      ]);
+      await db.tasks.where('id').anyOf(expiredIds).delete();
+    }
 
-  await db.projects.filter((p) => p.deletedAt !== null && p.deletedAt < cutoff).delete();
-  enqueueSyncWrite();
-  return ok(undefined);
+    await db.projects.filter((p) => p.deletedAt !== null && p.deletedAt < cutoff).delete();
+    enqueueSyncWrite();
+    return ok(undefined);
+  });
 }
