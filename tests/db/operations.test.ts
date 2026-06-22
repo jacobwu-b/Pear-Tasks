@@ -4,7 +4,10 @@ import {
   createArea,
   updateArea,
   deleteArea,
+  restoreArea,
   getAreas,
+  getDeletedItems,
+  getTrashTasks,
   createProject,
   updateProject,
   softDeleteProject,
@@ -119,6 +122,68 @@ describe('Areas', () => {
     // appear in the Inbox view after orphaning.
     const inbox = await getInboxTasks();
     expect(inbox.map((x) => x.id)).toContain(task!.id);
+  });
+
+  it('restores a soft-deleted area: row reappears in getAreas', async () => {
+    const { data: area } = await createArea('Work');
+    await deleteArea(area!.id);
+    expect(await getAreas()).toHaveLength(0);
+
+    await restoreArea(area!.id);
+
+    const areas = await getAreas();
+    expect(areas).toHaveLength(1);
+    expect(areas[0].id).toBe(area!.id);
+    expect(areas[0].deletedAt).toBeNull();
+  });
+
+  it('restoreArea returns error instead of throwing when Dexie rejects', async () => {
+    const { data: area } = await createArea('Work');
+    await deleteArea(area!.id);
+    vi.spyOn(db.areas, 'update').mockRejectedValueOnce(new Error('DatabaseClosedError'));
+    const result = await restoreArea(area!.id);
+    expect(result).toEqual({ data: null, error: 'DatabaseClosedError' });
+    vi.restoreAllMocks();
+  });
+});
+
+// ── Trash queries ──────────────────────────────────────────────────
+
+describe('Trash queries', () => {
+  it('getDeletedItems surfaces soft-deleted tasks, projects, and areas', async () => {
+    const { data: area } = await createArea('Work');
+    const { data: project } = await createProject('Launch');
+    const { data: task } = await createTask('Buy milk');
+
+    await deleteArea(area!.id);
+    await softDeleteProject(project!.id);
+    await softDeleteTask(task!.id);
+
+    const { tasks, projects, areas } = await getDeletedItems();
+    expect(tasks.map((t) => t.id)).toContain(task!.id);
+    expect(projects.map((p) => p.id)).toContain(project!.id);
+    expect(areas.map((a) => a.id)).toContain(area!.id);
+  });
+
+  it('getDeletedItems excludes live (non-deleted) areas', async () => {
+    const { data: live } = await createArea('Active');
+    const { data: trashed } = await createArea('Gone');
+    await deleteArea(trashed!.id);
+
+    const { areas } = await getDeletedItems();
+    expect(areas.map((a) => a.id)).toEqual([trashed!.id]);
+    expect(areas.map((a) => a.id)).not.toContain(live!.id);
+  });
+
+  it('getDeletedItems tasks match getTrashTasks exactly', async () => {
+    const { data: kept } = await createTask('Keep');
+    const { data: gone } = await createTask('Trash me');
+    await softDeleteTask(gone!.id);
+
+    const trashTasks = await getTrashTasks();
+    const { tasks } = await getDeletedItems();
+    expect(trashTasks.map((t) => t.id).sort()).toEqual(tasks.map((t) => t.id).sort());
+    expect(trashTasks.map((t) => t.id)).not.toContain(kept!.id);
   });
 });
 

@@ -51,7 +51,7 @@ function emptyMessage(view: SidebarView): string {
 
 export default function TaskList() {
   const { sidebarView, linkMode, enterLinkMode } = useUiStore();
-  const { projects, areas, createNewTask, edges, trashedProjects, restoreProject } = useTaskStore();
+  const { projects, areas, createNewTask, edges, trashedProjects, restoreProject, trashedAreas, restoreArea } = useTaskStore();
   const tasks = useViewTasks();
   const [showSaveTemplate, setShowSaveTemplate] = useState(false);
 
@@ -260,7 +260,50 @@ export default function TaskList() {
             ))}
           </div>
         )}
-        {tasks.length === 0 && (!isTrash || trashedProjects.length === 0) ? (
+        {/* Deleted areas section — shown only in Trash */}
+        {isTrash && trashedAreas.length > 0 && (
+          <div data-testid="trashed-areas-section">
+            <div
+              className="px-4 py-1.5 text-xs font-semibold uppercase tracking-wide"
+              style={{
+                color: 'var(--color-text-tertiary)',
+                borderBottom: '1px solid var(--color-border-primary)',
+              }}
+            >
+              Areas
+            </div>
+            {trashedAreas.map((area) => (
+              <div
+                key={area.id}
+                data-testid={`trashed-area-row-${area.id}`}
+                className="flex items-center justify-between px-4 py-2.5"
+                style={{ borderBottom: '1px solid var(--color-border-primary)' }}
+              >
+                <span
+                  className="text-sm"
+                  style={{ color: 'var(--color-text-secondary)' }}
+                >
+                  {area.title}
+                </span>
+                <button
+                  onClick={() => restoreArea(area.id)}
+                  data-testid={`restore-area-btn-${area.id}`}
+                  className="text-xs px-2 py-1 rounded cursor-pointer transition-colors"
+                  style={{ color: 'var(--color-accent)' }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = 'var(--color-accent-subtle)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = 'transparent';
+                  }}
+                >
+                  Restore
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        {tasks.length === 0 && (!isTrash || (trashedProjects.length === 0 && trashedAreas.length === 0)) ? (
           <p
             className="px-4 py-8 text-sm text-center"
             style={{ color: 'var(--color-text-tertiary)' }}

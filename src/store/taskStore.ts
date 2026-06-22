@@ -15,6 +15,7 @@ import {
   createArea as dbCreateArea,
   updateArea as dbUpdateArea,
   deleteArea as dbDeleteArea,
+  restoreArea as dbRestoreArea,
   getInboxTasks,
   getTodayTasks,
   getUpcomingTasks,
@@ -66,6 +67,7 @@ interface TaskState {
   edges: DependencyEdge[];
   /** Soft-deleted projects shown in Trash. Populated only when currentView === 'trash'. */
   trashedProjects: Project[];
+  trashedAreas: Area[];
   /** Currently loaded view (to know when to reload) */
   currentView: SidebarView | null;
   /** Fresh snapshot of the task whose detail panel is open. Null when no task is selected. */
@@ -123,6 +125,7 @@ interface TaskState {
   cancelProject: (id: string) => Promise<void>;
   deleteProject: (id: string) => Promise<void>;
   restoreProject: (id: string) => Promise<void>;
+  restoreArea: (id: string) => Promise<void>;
 
   // Selected task detail
   /** Load the task for the detail panel into `selectedTaskDetail`. Pass null to clear. */
@@ -172,9 +175,9 @@ async function fetchTasksForView(view: SidebarView): Promise<Task[]> {
   return [];
 }
 
-async function fetchTrashedProjects(): Promise<Project[]> {
-  const { projects } = await getDeletedItems();
-  return projects;
+async function fetchTrashedContainers(): Promise<{ projects: Project[]; areas: Area[] }> {
+  const { projects, areas } = await getDeletedItems();
+  return { projects, areas };
 }
 
 async function fetchEdgesForView(view: SidebarView): Promise<DependencyEdge[]> {
@@ -243,6 +246,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   tasks: [],
   edges: [],
   trashedProjects: [],
+  trashedAreas: [],
   currentView: null,
   selectedTaskDetail: null,
   checklistByTaskId: {},
@@ -255,23 +259,25 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   },
 
   loadTasksForView: async (view) => {
-    const [tasks, edges, trashedProjects] = await Promise.all([
+    const [tasks, edges, trashed] = await Promise.all([
       fetchTasksForView(view),
       fetchEdgesForView(view),
-      view === 'trash' ? fetchTrashedProjects() : Promise.resolve([]),
+      view === 'trash' ? fetchTrashedContainers() : Promise.resolve({ projects: [], areas: [] }),
     ]);
-    set({ tasks, edges, trashedProjects, currentView: view });
+    set({ tasks, edges, trashedProjects: trashed.projects, trashedAreas: trashed.areas, currentView: view });
   },
 
   refreshTasks: async () => {
     const { currentView } = get();
-    const [tasks, edges, caches, trashedProjects] = await Promise.all([
+    const [tasks, edges, caches, trashed] = await Promise.all([
       currentView ? fetchTasksForView(currentView) : Promise.resolve(get().tasks),
       currentView ? fetchEdgesForView(currentView) : Promise.resolve(get().edges),
       refreshDetailCaches(get()),
-      currentView === 'trash' ? fetchTrashedProjects() : Promise.resolve(get().trashedProjects),
+      currentView === 'trash'
+        ? fetchTrashedContainers()
+        : Promise.resolve({ projects: get().trashedProjects, areas: get().trashedAreas }),
     ]);
-    set({ tasks, edges, trashedProjects, ...caches });
+    set({ tasks, edges, trashedProjects: trashed.projects, trashedAreas: trashed.areas, ...caches });
   },
 
   rehydrateAll: async () => {
@@ -360,6 +366,12 @@ export const useTaskStore = create<TaskState>((set, get) => ({
 
   restoreProject: async (id) => {
     await dbRestoreProject(id);
+    await get().loadSidebarData();
+    await get().refreshTasks();
+  },
+
+  restoreArea: async (id) => {
+    await dbRestoreArea(id);
     await get().loadSidebarData();
     await get().refreshTasks();
   },
