@@ -76,8 +76,8 @@ export async function updateArea(
 
 export async function deleteArea(id: string): Promise<Result<void>> {
   return tryDb(async () => {
-    // Soft delete: mark the area deleted but keep the row so we could
-    // theoretically restore it later. No purge schedule (per product decision).
+    // Soft delete: mark the area deleted but keep the row so it can be surfaced
+    // in Trash and restored. purgeOldTrash hard-deletes it after 30 days (#58).
     await db.areas.update(id, { deletedAt: Date.now() });
     // Orphan projects — set their areaId to null so they appear in "No Area"
     await db.projects.where('areaId').equals(id).modify({ areaId: null });
