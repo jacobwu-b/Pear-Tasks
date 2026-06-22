@@ -131,11 +131,13 @@ export async function updateProject(
   changes: Partial<Omit<Project, 'id' | 'createdAt'>>
 ): Promise<Result<Project>> {
   return tryDb(async () => {
-    // Auto-set completedAt when status changes to completed
-    if (changes.status === 'completed' && !changes.completedAt) {
-      changes.completedAt = Date.now();
+    // Auto-set completedAt when status changes to completed. Patch a local copy
+    // so the caller-owned changes object is never mutated.
+    const patch = { ...changes };
+    if (patch.status === 'completed' && !patch.completedAt) {
+      patch.completedAt = Date.now();
     }
-    await db.projects.update(id, changes);
+    await db.projects.update(id, patch);
     const project = await db.projects.get(id);
     if (!project) return err('Project not found');
     enqueueSyncWrite();
@@ -216,10 +218,12 @@ export async function updateTask(
   changes: Partial<Omit<Task, 'id' | 'createdAt'>>
 ): Promise<Result<Task>> {
   return tryDb(async () => {
-    if (changes.status === 'completed' && !changes.completedAt) {
-      changes.completedAt = Date.now();
+    // Patch a local copy so the caller-owned changes object is never mutated.
+    const patch = { ...changes };
+    if (patch.status === 'completed' && !patch.completedAt) {
+      patch.completedAt = Date.now();
     }
-    await db.tasks.update(id, changes);
+    await db.tasks.update(id, patch);
     const task = await db.tasks.get(id);
     if (!task) return err('Task not found');
     enqueueSyncWrite();
