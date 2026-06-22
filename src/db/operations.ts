@@ -89,6 +89,17 @@ export async function deleteArea(id: string): Promise<Result<void>> {
   });
 }
 
+export async function restoreArea(id: string): Promise<Result<void>> {
+  return tryDb(async () => {
+    // Clearing deletedAt brings the area back into the sidebar. Restore is
+    // lossy by design: deleteArea orphaned its projects/tasks to "No Area" and
+    // those stay orphaned, so the area returns empty (#58).
+    await db.areas.update(id, { deletedAt: null });
+    enqueueSyncWrite();
+    return ok(undefined);
+  });
+}
+
 export async function getAreas(): Promise<Area[]> {
   return db.areas
     .orderBy('sortOrder')
@@ -308,10 +319,14 @@ export async function getTodayTasks(): Promise<Task[]> {
   return tasks.filter((t) => !blocked.has(t.id));
 }
 
-export async function getDeletedItems(): Promise<{ tasks: Task[]; projects: Project[] }> {
-  const tasks = await db.tasks.filter((t) => t.deletedAt !== null).toArray();
-  const projects = await db.projects.filter((p) => p.deletedAt !== null).toArray();
-  return { tasks, projects };
+export async function getDeletedItems(): Promise<{ tasks: Task[]; projects: Project[]; areas: Area[] }> {
+  // getTrashTasks is the single source for the `deletedAt !== null` task query (#58).
+  const [tasks, projects, areas] = await Promise.all([
+    getTrashTasks(),
+    db.projects.filter((p) => p.deletedAt !== null).toArray(),
+    db.areas.filter((a) => a.deletedAt !== null).toArray(),
+  ]);
+  return { tasks, projects, areas };
 }
 
 export async function getAnytimeTasks(): Promise<Task[]> {

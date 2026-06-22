@@ -275,6 +275,35 @@ describe('taskStore', () => {
     expect(useTaskStore.getState().projects.map((p) => p.id)).toContain(project!.id);
   });
 
+  it('trash view surfaces soft-deleted areas in trashedAreas', async () => {
+    const { data: area } = await createArea('Old Area');
+    await useTaskStore.getState().removeArea(area!.id);
+
+    await useTaskStore.getState().loadTasksForView('trash');
+
+    expect(useTaskStore.getState().trashedAreas.map((a) => a.id)).toContain(area!.id);
+  });
+
+  it('trash view does not include active areas in trashedAreas', async () => {
+    await createArea('Live Area');
+
+    await useTaskStore.getState().loadTasksForView('trash');
+
+    expect(useTaskStore.getState().trashedAreas).toHaveLength(0);
+  });
+
+  it('restoreArea removes area from trashedAreas and returns it to the sidebar', async () => {
+    const { data: area } = await createArea('Restore Me');
+    await useTaskStore.getState().removeArea(area!.id);
+    await useTaskStore.getState().loadTasksForView('trash');
+    expect(useTaskStore.getState().trashedAreas).toHaveLength(1);
+
+    await useTaskStore.getState().restoreArea(area!.id);
+
+    expect(useTaskStore.getState().trashedAreas).toHaveLength(0);
+    expect(useTaskStore.getState().areas.map((a) => a.id)).toContain(area!.id);
+  });
+
   it('deleteProject soft-deletes project and it appears in trash view', async () => {
     const { data: project } = await createProject('Soft Delete Me');
 
