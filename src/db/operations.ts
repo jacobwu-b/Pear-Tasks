@@ -42,19 +42,23 @@ function generateId(): string {
 export async function createArea(
   title: string
 ): Promise<Result<Area>> {
-  return tryDb(async () => {
-    const maxOrder = await db.areas.orderBy('sortOrder').last();
-    const area: Area = {
-      id: generateId(),
-      title,
-      sortOrder: (maxOrder?.sortOrder ?? -1) + 1,
-      createdAt: Date.now(),
-      deletedAt: null,
-    };
-    await db.areas.add(area);
-    enqueueSyncWrite();
-    return ok(area);
-  });
+  return tryDb(() =>
+    // Read-max + add in one transaction so concurrent creates can't both read
+    // the same max and collide on sortOrder (#54).
+    db.transaction('rw', db.areas, async () => {
+      const maxOrder = await db.areas.orderBy('sortOrder').last();
+      const area: Area = {
+        id: generateId(),
+        title,
+        sortOrder: (maxOrder?.sortOrder ?? -1) + 1,
+        createdAt: Date.now(),
+        deletedAt: null,
+      };
+      await db.areas.add(area);
+      enqueueSyncWrite();
+      return ok(area);
+    })
+  );
 }
 
 export async function updateArea(
@@ -98,25 +102,28 @@ export async function createProject(
   title: string,
   areaId: string | null = null
 ): Promise<Result<Project>> {
-  return tryDb(async () => {
-    const maxOrder = await db.projects.orderBy('sortOrder').last();
-    const project: Project = {
-      id: generateId(),
-      title,
-      notes: '',
-      status: 'active',
-      areaId,
-      deadline: null,
-      tags: [],
-      sortOrder: (maxOrder?.sortOrder ?? -1) + 1,
-      createdAt: Date.now(),
-      completedAt: null,
-      deletedAt: null,
-    };
-    await db.projects.add(project);
-    enqueueSyncWrite();
-    return ok(project);
-  });
+  return tryDb(() =>
+    // Read-max + add in one transaction to avoid concurrent sortOrder collisions (#54).
+    db.transaction('rw', db.projects, async () => {
+      const maxOrder = await db.projects.orderBy('sortOrder').last();
+      const project: Project = {
+        id: generateId(),
+        title,
+        notes: '',
+        status: 'active',
+        areaId,
+        deadline: null,
+        tags: [],
+        sortOrder: (maxOrder?.sortOrder ?? -1) + 1,
+        createdAt: Date.now(),
+        completedAt: null,
+        deletedAt: null,
+      };
+      await db.projects.add(project);
+      enqueueSyncWrite();
+      return ok(project);
+    })
+  );
 }
 
 export async function updateProject(
@@ -176,29 +183,32 @@ export async function createTask(
     Pick<Task, 'projectId' | 'areaId' | 'when' | 'deadline' | 'tags' | 'notes' | 'recurrence' | 'recurringParentId'>
   > = {}
 ): Promise<Result<Task>> {
-  return tryDb(async () => {
-    const maxOrder = await db.tasks.orderBy('sortOrder').last();
-    const task: Task = {
-      id: generateId(),
-      title,
-      notes: options.notes ?? '',
-      status: 'open',
-      when: options.when ?? null,
-      deadline: options.deadline ?? null,
-      tags: options.tags ?? [],
-      projectId: options.projectId ?? null,
-      areaId: options.areaId ?? null,
-      sortOrder: (maxOrder?.sortOrder ?? -1) + 1,
-      createdAt: Date.now(),
-      completedAt: null,
-      deletedAt: null,
-      recurrence: options.recurrence ?? null,
-      recurringParentId: options.recurringParentId ?? null,
-    };
-    await db.tasks.add(task);
-    enqueueSyncWrite();
-    return ok(task);
-  });
+  return tryDb(() =>
+    // Read-max + add in one transaction to avoid concurrent sortOrder collisions (#54).
+    db.transaction('rw', db.tasks, async () => {
+      const maxOrder = await db.tasks.orderBy('sortOrder').last();
+      const task: Task = {
+        id: generateId(),
+        title,
+        notes: options.notes ?? '',
+        status: 'open',
+        when: options.when ?? null,
+        deadline: options.deadline ?? null,
+        tags: options.tags ?? [],
+        projectId: options.projectId ?? null,
+        areaId: options.areaId ?? null,
+        sortOrder: (maxOrder?.sortOrder ?? -1) + 1,
+        createdAt: Date.now(),
+        completedAt: null,
+        deletedAt: null,
+        recurrence: options.recurrence ?? null,
+        recurringParentId: options.recurringParentId ?? null,
+      };
+      await db.tasks.add(task);
+      enqueueSyncWrite();
+      return ok(task);
+    })
+  );
 }
 
 export async function updateTask(
@@ -415,24 +425,27 @@ export async function addChecklistItem(
   taskId: string,
   title: string
 ): Promise<Result<ChecklistItem>> {
-  return tryDb(async () => {
-    const existing = await db.checklistItems
-      .where('taskId')
-      .equals(taskId)
-      .sortBy('sortOrder');
-    const maxOrder = existing.length > 0 ? existing[existing.length - 1].sortOrder : -1;
+  return tryDb(() =>
+    // Read-max + add in one transaction to avoid concurrent sortOrder collisions (#54).
+    db.transaction('rw', db.checklistItems, async () => {
+      const existing = await db.checklistItems
+        .where('taskId')
+        .equals(taskId)
+        .sortBy('sortOrder');
+      const maxOrder = existing.length > 0 ? existing[existing.length - 1].sortOrder : -1;
 
-    const item: ChecklistItem = {
-      id: generateId(),
-      taskId,
-      title,
-      completed: false,
-      sortOrder: maxOrder + 1,
-    };
-    await db.checklistItems.add(item);
-    enqueueSyncWrite();
-    return ok(item);
-  });
+      const item: ChecklistItem = {
+        id: generateId(),
+        taskId,
+        title,
+        completed: false,
+        sortOrder: maxOrder + 1,
+      };
+      await db.checklistItems.add(item);
+      enqueueSyncWrite();
+      return ok(item);
+    })
+  );
 }
 
 export async function updateChecklistItem(
@@ -470,45 +483,52 @@ export async function addDependency(
   toTaskId: string,
   projectId: string
 ): Promise<Result<DependencyEdge>> {
-  return tryDb(async () => {
-    // Validate both tasks exist and are in the same project
-    const [fromTask, toTask] = await Promise.all([
-      db.tasks.get(fromTaskId),
-      db.tasks.get(toTaskId),
-    ]);
-    if (!fromTask || !toTask) return err('One or both tasks not found');
-    if (fromTask.projectId !== projectId || toTask.projectId !== projectId) {
-      return err('Both tasks must be in the same project');
-    }
+  return tryDb(() =>
+    // Read, check, and insert run in one transaction so the duplicate and cycle
+    // checks are atomic with the commit. Without this, two concurrent writers
+    // (multi-tab sync, pear-mcp) can each pass the check and both insert,
+    // violating the DAG invariant (CLAUDE.md §6, #54). Dexie serializes rw
+    // transactions over the same stores, closing the TOCTOU gap.
+    db.transaction('rw', db.tasks, db.dependencyEdges, async () => {
+      // Validate both tasks exist and are in the same project
+      const [fromTask, toTask] = await Promise.all([
+        db.tasks.get(fromTaskId),
+        db.tasks.get(toTaskId),
+      ]);
+      if (!fromTask || !toTask) return err('One or both tasks not found');
+      if (fromTask.projectId !== projectId || toTask.projectId !== projectId) {
+        return err('Both tasks must be in the same project');
+      }
 
-    // Check for duplicate via indexed lookup (#11).
-    const existing = await db.dependencyEdges
-      .where('fromTaskId')
-      .equals(fromTaskId)
-      .and((e) => e.toTaskId === toTaskId)
-      .first();
-    if (existing) return err('Dependency already exists');
+      // Check for duplicate via indexed lookup (#11).
+      const existing = await db.dependencyEdges
+        .where('fromTaskId')
+        .equals(fromTaskId)
+        .and((e) => e.toTaskId === toTaskId)
+        .first();
+      if (existing) return err('Dependency already exists');
 
-    // Cycle detection
-    const edges = await db.dependencyEdges
-      .where('projectId')
-      .equals(projectId)
-      .toArray();
+      // Cycle detection
+      const edges = await db.dependencyEdges
+        .where('projectId')
+        .equals(projectId)
+        .toArray();
 
-    if (wouldCreateCycle(edges, fromTaskId, toTaskId)) {
-      return err('This would create a circular dependency');
-    }
+      if (wouldCreateCycle(edges, fromTaskId, toTaskId)) {
+        return err('This would create a circular dependency');
+      }
 
-    const edge: DependencyEdge = {
-      id: generateId(),
-      fromTaskId,
-      toTaskId,
-      projectId,
-    };
-    await db.dependencyEdges.add(edge);
-    enqueueSyncWrite();
-    return ok(edge);
-  });
+      const edge: DependencyEdge = {
+        id: generateId(),
+        fromTaskId,
+        toTaskId,
+        projectId,
+      };
+      await db.dependencyEdges.add(edge);
+      enqueueSyncWrite();
+      return ok(edge);
+    })
+  );
 }
 
 export async function removeDependency(id: string): Promise<Result<void>> {
