@@ -145,6 +145,13 @@ describe('Projects', () => {
     expect(updated!.completedAt).toBeTypeOf('number');
   });
 
+  it('does not mutate the caller-supplied changes object on completion', async () => {
+    const { data: project } = await createProject('P1');
+    const changes = { status: 'completed' as const };
+    await updateProject(project!.id, changes);
+    expect(changes).not.toHaveProperty('completedAt');
+  });
+
   it('soft-deletes a project and its tasks', async () => {
     const { data: project } = await createProject('P1');
     await createTask('T1', { projectId: project!.id });
@@ -201,6 +208,13 @@ describe('Tasks', () => {
     const { data: task } = await createTask('T1');
     const { data: updated } = await updateTask(task!.id, { status: 'completed' });
     expect(updated!.completedAt).toBeTypeOf('number');
+  });
+
+  it('does not mutate the caller-supplied changes object on completion', async () => {
+    const { data: task } = await createTask('T1');
+    const changes = { status: 'completed' as const };
+    await updateTask(task!.id, changes);
+    expect(changes).not.toHaveProperty('completedAt');
   });
 
   it('soft-deletes a task: row remains with deletedAt set, edges hidden from getDependencyEdges', async () => {
