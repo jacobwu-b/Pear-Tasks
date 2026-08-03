@@ -1,0 +1,48 @@
+version: 2
+
+# Without this file only *security* updates run, so the lockfile moves only when an
+# advisory lands — which is how the same transitive dev packages generated nine
+# reactive PRs in five weeks. Scheduled version updates keep the tree ahead of
+# advisories instead of chasing them. See docs/decisions/0002-dependency-update-policy.md.
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    # Keep package.json ranges honest. The default (`auto`) leaves the manifest
+    # untouched whenever the existing caret already admits the new version, which is
+    # how postcss drifted to a version nobody selected as a side effect of a vite bump.
+    versioning-strategy: increase
+    commit-message:
+      prefix: chore(deps)
+      prefix-development: chore(deps-dev)
+    groups:
+      # Split by scope, not by package: dev-scope bumps auto-merge on green CI while
+      # production bumps stay reviewable. Restricting each group to minor/patch leaves
+      # majors ungrouped, so they arrive as individual PRs that require a human.
+      production-dependencies:
+        dependency-type: production
+        update-types:
+          - minor
+          - patch
+      development-dependencies:
+        dependency-type: development
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: chore(ci)
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch

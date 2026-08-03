@@ -42,6 +42,18 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Blocking gate. The shipped bundle is exactly the production tree, so anything
+      # reachable by a user of the deployed app must fail the build.
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=moderate
+
+      # Non-blocking. No dev-scope package reaches the bundle, so these are hygiene, not
+      # incidents — they clear on the monthly Dependabot pass. Surfaced here so an alert
+      # Dependabot silently skips is visible in CI instead of only in the alerts UI.
+      - name: Audit full dependency tree
+        continue-on-error: true
+        run: npm audit --audit-level=low
+
       - name: Lint
         run: npm run lint
 

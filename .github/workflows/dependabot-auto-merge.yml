@@ -1,0 +1,37 @@
+name: Dependabot auto-merge
+
+# Dependabot PRs run with a read-only GITHUB_TOKEN under `pull_request`, which cannot
+# enable auto-merge. `pull_request_target` runs in the base-repo context with a writable
+# token. That is only safe because this workflow never checks out or executes PR code —
+# it reads metadata and calls the API. Do not add a checkout step here.
+on: pull_request_target
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    name: Auto-merge dev-scope updates
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Fetch Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+
+      # Production dependencies and majors stay with a human (CLAUDE.md §6). Transitive
+      # packages report as `indirect` with no scope attached; they are admitted because
+      # the Quality Gate blocks on production advisories independently.
+      - name: Enable auto-merge
+        if: |
+          (steps.metadata.outputs.dependency-type == 'direct:development'
+            || steps.metadata.outputs.dependency-type == 'indirect')
+          && (steps.metadata.outputs.update-type == 'version-update:semver-patch'
+            || steps.metadata.outputs.update-type == 'version-update:semver-minor')
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
