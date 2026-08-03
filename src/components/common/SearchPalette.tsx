@@ -61,13 +61,10 @@ function SearchPaletteBody({ onClose }: { onClose: () => void }) {
     inputRef.current?.focus();
   }, []);
 
-  // Debounced search — 100ms after the user stops typing.
+  // Debounced search — 100ms after the user stops typing. Clearing on an empty query
+  // happens in the change handler, not here: setState in an effect body cascades renders.
   useEffect(() => {
-    if (!query.trim()) {
-      setResults([]);
-      setActiveIndex(0);
-      return;
-    }
+    if (!query.trim()) return;
     const timer = setTimeout(async () => {
       const r = await searchAll(query);
       setResults(r);
@@ -135,7 +132,14 @@ function SearchPaletteBody({ onClose }: { onClose: () => void }) {
           data-testid="search-palette-input"
           type="text"
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => {
+            const next = e.target.value;
+            setQuery(next);
+            if (!next.trim()) {
+              setResults([]);
+              setActiveIndex(0);
+            }
+          }}
           onKeyDown={handleKeyDown}
           placeholder="Search tasks and projects..."
           aria-label="Search tasks and projects"
