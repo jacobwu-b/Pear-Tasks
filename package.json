@@ -12,18 +12,18 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@dagrejs/dagre": "^3.0.0",
+    "@dagrejs/dagre": "^3.1.1",
     "chrono-node": "^2.10.1",
-    "dexie": "^4.4.4",
+    "dexie": "^4.4.5",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "rrule": "^2.8.1",
-    "zustand": "^5.0.14"
+    "zustand": "^5.0.15"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@tailwindcss/vite": "^4.3.3",
-    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",
     "@types/dagre": "^0.7.54",
     "@types/node": "^26.4.0",
